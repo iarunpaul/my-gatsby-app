@@ -72,8 +72,8 @@ const IndexPage = () => {
       <header className="header">
         <h1>Welcome to My Personal Website</h1>
         <nav>
-          <a href="/">Home</a>
-          <a href="/about">About</a>
+          <a href="https://blog.iarunpaul.com">Blogs</a>
+          <a href="https://blog.iarunpaul.com/about">About</a>
         </nav>
       </header>
       <main>
