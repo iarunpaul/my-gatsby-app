@@ -68,18 +68,12 @@ import "../styles/global.css"; // Import your global CSS
 import { Link } from 'gatsby';
 import Layout from '../components/layout';
 import { StaticImage } from 'gatsby-plugin-image';
+import Seo from '../components/seo';
 
 const IndexPage = () => {
   return (
     <Layout pageTitle="Home Page">
       <div className="container">
-        <header className="header">
-          <h1>Welcome to My Personal Website</h1>
-          <nav>
-            <a href="https://blog.iarunpaul.com">Blogs</a>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
         <main>
           <h2>Under Construction</h2>
           <p>My website is currently under construction. Please check back soon!</p>
@@ -92,5 +86,5 @@ const IndexPage = () => {
     </Layout>
   );
 };
-export const Head = () => <title>Home Page</title>
+export const Head = () => <Seo title="Home Page" />
 export default IndexPage;
