@@ -67,6 +67,7 @@ import React from "react";
 import "../styles/global.css"; // Import your global CSS
 import { Link } from 'gatsby';
 import Layout from '../components/layout';
+import { StaticImage } from 'gatsby-plugin-image';
 
 const IndexPage = () => {
   return (
@@ -83,6 +84,10 @@ const IndexPage = () => {
           <h2>Under Construction</h2>
           <p>My website is currently under construction. Please check back soon!</p>
         </main>
+        <StaticImage
+          alt="Landing page image"
+          src="..\images\homepic.webp"
+        />
       </div>
     </Layout>
   );
