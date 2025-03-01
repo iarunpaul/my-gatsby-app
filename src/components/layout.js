@@ -38,7 +38,7 @@ const Layout = ({ pageTitle, children }) => {
                     <a href="https://blog.iarunpaul.com">Blogs</a>
                 </li>
                 <li className={navLinkItem}>
-                    <Link to="/blog" className={navLinkText}>
+                    <Link to="/microblog" className={navLinkText}>
                     MicroBlog
                     </Link>
                 </li>
