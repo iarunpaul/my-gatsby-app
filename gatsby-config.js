@@ -9,7 +9,7 @@
  */
 module.exports = {
   siteMetadata: {
-    title: `I am a Software Architect`,
+    title: `I | Arun Paul`,
     description: `Personal website showcasing projects, certifications, and microblogs.`,
     author: `@iarunpaul`,
     siteUrl: `https://web.iarunpaul.com`, // Update with your custom domain
