@@ -56,5 +56,6 @@ module.exports = {
     },
     // Optional: Add sitemap
     `gatsby-plugin-sitemap`,
+    `gatsby-plugin-mdx`,
   ],
 };
