@@ -16,7 +16,6 @@ module.exports = {
   },
   plugins: [
     `gatsby-plugin-image`,
-    `gatsby-plugin-react-helmet`,
     `gatsby-plugin-tailwindcss`, // Add Tailwind CSS support
     `gatsby-plugin-postcss`, // Add PostCSS support
     `gatsby-transformer-sharp`,
@@ -49,12 +48,12 @@ module.exports = {
       },
     },
     // Optional: Add Google Analytics
-    {
-      resolve: `gatsby-plugin-google-analytics`,
-      options: {
-        trackingId: `YOUR_GOOGLE_ANALYTICS_TRACKING_ID`,
-      },
-    },
+    // {
+    //   resolve: `gatsby-plugin-google-analytics`,
+    //   options: {
+    //     trackingId: `YOUR_GOOGLE_ANALYTICS_TRACKING_ID`,
+    //   },
+    // },
     // Optional: Add sitemap
     `gatsby-plugin-sitemap`,
     `gatsby-plugin-mdx`,
