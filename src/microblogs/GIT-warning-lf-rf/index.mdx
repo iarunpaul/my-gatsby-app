@@ -1,0 +1,40 @@
+---
+title: "Git LF will be replaced by CRLF"
+date: "2025-03-03"
+slug: "git-LF-will-be-replaced-by-CRLF"
+hero_image: ".\GIT-LF-CLRF.webp"
+hero_image_alt: "Git warning about LF and CRLF"
+hero_image_credit_text: "Dall-E by OpenAI"
+hero_image_credit_link: "https://openai.com/index/dall-e-3/"
+---
+
+### What’s This Warning?
+Git warns:
+```
+warning: in the working copy of 'gatsby-config.js', LF will be replaced by CRLF
+```
+This happens because Linux/macOS use **LF**, while Windows uses **CRLF** for line endings.
+
+### What Does This Mean?
+This warning appears when your repository has files with **LF (Line Feed)** line endings, but your local system (likely Windows) is set to use **CRLF (Carriage Return + Line Feed)**. Git is informing you that when it updates the file, it will convert the line endings accordingly.
+
+### Why Does This Happen?
+Different operating systems use different conventions for line endings:
+- **Linux/macOS:** LF (`\n`)
+- **Windows:** CRLF (`\r\n`)
+
+### How to Fix It
+- Keep LF (recommended for cross-platform projects):
+  ```
+  git config --global core.autocrlf input
+  ```
+- Use Windows-style CRLF:
+  ```
+  git config --global core.autocrlf true
+  ```
+- Enforce LF in a repo:
+  ```
+  echo "* text=auto" > .gitattributes
+  ```
+This ensures consistency across systems!
+
