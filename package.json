@@ -15,9 +15,10 @@
     "clean": "gatsby clean"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
     "@mdx-js/react": "^2.3.0",
-    "@tailwindcss/postcss": "^4.0.6",
-    "autoprefixer": "^10.4.20",
+    "@mui/material": "^6.4.6",
     "axios": "^1.7.9",
     "gatsby": "^5.14.1",
     "gatsby-plugin-google-analytics": "^5.14.0",
@@ -32,9 +33,12 @@
     "gatsby-source-filesystem": "^5.14.0",
     "gatsby-transformer-remark": "^6.14.0",
     "gatsby-transformer-sharp": "^5.14.0",
-    "postcss": "^8.5.2",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "tailwindcss": "^4.0.6"
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17"
   }
 }

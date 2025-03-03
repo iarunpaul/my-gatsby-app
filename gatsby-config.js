@@ -18,6 +18,7 @@ module.exports = {
     `gatsby-plugin-image`,
     `gatsby-plugin-react-helmet`,
     `gatsby-plugin-tailwindcss`, // Add Tailwind CSS support
+    `gatsby-plugin-postcss`, // Add PostCSS support
     `gatsby-transformer-sharp`,
     `gatsby-plugin-sharp`,
     {

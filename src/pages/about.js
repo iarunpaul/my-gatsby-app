@@ -1,6 +1,5 @@
 import React from "react";
 import useRotateText from "../hooks/useRotateText";
-import "../hooks/about.css"; // Add styles if needed
 import Layout from "../components/layout";
 
 const AboutPage = () => {
@@ -8,29 +7,29 @@ const AboutPage = () => {
 
   return (
     <Layout pageTitle="About Page">
-        <div className="container">
-            <div className="title">
-                <h1>
-                Programming is <code>{rotatingText}</code>
-                </h1>
-            </div>
-            <p>
-                Here's a bit about me. I'm a software architect who loves to build things.
-                I'm passionate about learning new technologies and sharing my knowledge with others.
-                I'm excited to see what the future holds and can't wait to see where my career takes me.
-            </p>
-            <hr />
-            <h3>Here's a bit about me</h3>
-            <ul>
-                <li>👨‍🎓 Currently Studying at...</li>
-                <li>🎮 Fun thing you have done...</li>
-                <li>🖥️ Your work experience...</li>
-                <li>👨‍🏭 Interesting project you have worked on</li>
-                <li>🚵‍♂️ Hobbies...</li>
-            </ul>
-            <hr />
-            <h3>My Tech Stack</h3>
-            <ul>
+      <div className="container mx-auto p-4">
+        <div className="title">
+          <h1 className="text-4xl font-bold">
+            Programming is <code className="text-blue-500">{rotatingText}</code>
+          </h1>
+        </div>
+        <p className="mt-4">
+          Here's a bit about me. I'm a software architect who loves to build things.
+          I'm passionate about learning new technologies and sharing my knowledge with others.
+          I'm excited to see what the future holds and can't wait to see where my career takes me.
+        </p>
+        <hr className="my-4" />
+        <h3 className="text-2xl font-semibold">Here's a bit about me</h3>
+        <ul className="list-disc list-inside mt-2">
+          <li>👨‍🎓 Currently Studying at...</li>
+          <li>🎮 Fun thing you have done...</li>
+          <li>🖥️ Your work experience...</li>
+          <li>👨‍🏭 Interesting project you have worked on</li>
+          <li>🚵‍♂️ Hobbies...</li>
+        </ul>
+        <hr className="my-4" />
+        <h3 className="text-2xl font-semibold">My Tech Stack</h3>
+        <ul className="list-disc list-inside mt-2">
                 <li>📜 TypeScript</li>
                 <li>🅰️ Angular</li>
                 <li>🖥️ Bash</li>
@@ -44,11 +43,8 @@ const AboutPage = () => {
                 <li>Java: ☕</li>
                 <li>C#: 🔷</li>
             </ul>
-            <hr />
-            <div className="git-stats"></div>
-        </div>
+      </div>
     </Layout>
-   
   );
 };
 
