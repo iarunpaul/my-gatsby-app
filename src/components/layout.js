@@ -1,6 +1,5 @@
 import React from "react";
 import { Link, useStaticQuery, graphql } from "gatsby";
-import "../styles/global.css";
 
 const Layout = ({ pageTitle, children }) => {
   const data = useStaticQuery(graphql`
@@ -16,7 +15,7 @@ const Layout = ({ pageTitle, children }) => {
   return (
     <div className="container mx-auto p-4">
       <header className="bg-gray-800 text-white p-4 text-center">
-        <h1 className="text-3xl font-bold">{data.site.siteMetadata.title}</h1>
+        <h1 className="text-3xl font-bold">{pageTitle} | {data.site.siteMetadata.title}</h1>
         <nav>
           <ul className="flex justify-center space-x-4">
             <li>
@@ -43,7 +42,6 @@ const Layout = ({ pageTitle, children }) => {
         </nav>
       </header>
       <main>
-        <h1 className="text-4xl font-bold mt-4">{pageTitle}</h1>
         {children}
       </main>
     </div>

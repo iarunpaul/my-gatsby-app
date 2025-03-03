@@ -1,6 +1,7 @@
 import React from "react";
 import useRotateText from "../hooks/useRotateText";
 import Layout from "../components/layout";
+import Seo from "../components/seo";
 
 const AboutPage = () => {
   const rotatingText = useRotateText(["passion.", "fun.", "a journey.", "LIFE."], 200);
@@ -47,5 +48,5 @@ const AboutPage = () => {
     </Layout>
   );
 };
-
+export const Head = () => <Seo header="About Page" />
 export default AboutPage;
