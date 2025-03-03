@@ -1,8 +1,8 @@
 ---
 title: "Git LF will be replaced by CRLF"
 date: "2025-03-03"
-slug: "git-LF-will-be-replaced-by-CRLF"
-hero_image: "./my-first-blog.jpg"
+slug: "git-lf-crlf-warning"
+hero_image: "./GIT-LF-CLRF.webp"
 hero_image_alt: "Git warning about LF and CRLF"
 hero_image_credit_text: "Dall-E by OpenAI"
 hero_image_credit_link: "https://openai.com/index/dall-e-3/"
@@ -10,7 +10,7 @@ hero_image_credit_link: "https://openai.com/index/dall-e-3/"
 
 ### What’s This Warning?
 Git warns:
-```
+```bash
 warning: in the working copy of 'gatsby-config.js', LF will be replaced by CRLF
 ```
 This happens because Linux/macOS use **LF**, while Windows uses **CRLF** for line endings.
@@ -24,17 +24,22 @@ Different operating systems use different conventions for line endings:
 - **Windows:** CRLF (`\r\n`)
 
 ### How to Fix It
+
 - Keep LF (recommended for cross-platform projects):
-  ```
+
+  ```javascript
   git config --global core.autocrlf input
   ```
 - Use Windows-style CRLF:
-  ```
+  ```javascript
   git config --global core.autocrlf true
   ```
 - Enforce LF in a repo:
-  ```
+  ```javascript
   echo "* text=auto" > .gitattributes
   ```
+
+
+
 This ensures consistency across systems!
 

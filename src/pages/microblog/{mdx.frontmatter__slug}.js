@@ -23,7 +23,7 @@ const BlogPost = ({ data, children }) => {
             {data.mdx.frontmatter.hero_image_credit_text}
           </a>
         </p>
-        <div className="prose prose-lg mx-auto">
+        <div  className="prose prose-lg mx-auto">
           {children}
         </div>
       </div>
