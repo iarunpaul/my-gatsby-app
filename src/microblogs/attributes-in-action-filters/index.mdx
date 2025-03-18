@@ -1,0 +1,76 @@
+---
+title: "Attributes in Action Filters"
+date: "2025-03-18"
+slug: "attributes-in-action-filters"
+hero_image: "./GIT-LF-CLRF.webp"
+hero_image_alt: "Git warning about LF and CRLF"
+hero_image_credit_text: "Dall-E by OpenAI"
+hero_image_credit_link: "https://openai.com/index/dall-e-3/"
+---
+
+## Attributes in Action Filters
+
+Action filters in ASP.NET Core allow you to execute custom logic before or after an action method runs. The most common way to apply them is through attributes.
+
+### **1. `TypeFilterAttribute`**
+`TypeFilterAttribute` is useful when you need to create a filter dynamically and pass constructor arguments manually.
+
+```csharp
+public class CustomAuthorizeAttribute : TypeFilterAttribute
+{
+    public CustomAuthorizeAttribute(string role) : base(typeof(CustomAuthorizationFilter))
+    {
+        Arguments = new object[] { role };
+    }
+}
+```
+
+🔹 **Why use it?**
+- Allows passing **non-service arguments** to filters.
+- Uses dependency injection for constructor dependencies.
+
+### **2. `ServiceFilterAttribute`**
+Use `ServiceFilterAttribute` when the filter is already registered as a service in the DI container.
+
+```csharp
+[ServiceFilter(typeof(CustomAuthorizationFilter))]
+```
+
+🔹 **Why use it?**
+- **Reuses existing services**, reducing object instantiation.
+- Ensures **filter dependencies are managed by DI**.
+
+### **3. Custom Authorization Example**
+Here's a practical example using `TypeFilterAttribute`:
+
+```csharp
+public class CustomAuthorizationFilter : IAuthorizationFilter
+{
+    private readonly string _role;
+    public CustomAuthorizationFilter(string role) => _role = role;
+
+    public void OnAuthorization(AuthorizationFilterContext context)
+    {
+        var user = context.HttpContext.User;
+        if (!user.IsInRole(_role))
+        {
+            context.Result = new ForbidResult();
+        }
+    }
+}
+```
+
+#### **Applying the Filter**
+```csharp
+[CustomAuthorize("Admin")]
+public IActionResult SecureEndpoint()
+{
+    return Ok("You have access!");
+}
+```
+
+🚀 **Best Practice:** Use `TypeFilterAttribute` if you need custom arguments, otherwise use `ServiceFilterAttribute` to leverage DI.
+
+#aspnetcore #actionfilters #dependencyinjection
+
+
