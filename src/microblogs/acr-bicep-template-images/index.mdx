@@ -8,7 +8,7 @@ hero_image_credit_text: "Dall-E by OpenAI"
 hero_image_credit_link: "https://openai.com/index/dall-e-3/"
 ---
 
-# 🚀 Deploying Bicep Templates from Azure Container Registry (ACR)
+## 🚀 Deploying Bicep Templates from Azure Container Registry (ACR)
 
 **Bicep** is an Infrastructure-as-Code (IaC) language that simplifies **Azure resource deployments**.  
 By storing Bicep templates in **Azure Container Registry (ACR)** as OCI artifacts, teams can benefit from:
@@ -17,10 +17,10 @@ By storing Bicep templates in **Azure Container Registry (ACR)** as OCI artifact
 ✅ **Simplified deployment workflows**  
 
 
-## **1️⃣ Publishing Bicep Templates to ACR**
+### 1️⃣ Publishing Bicep Templates to ACR
 First, **store your Bicep template** in ACR so it can be retrieved and deployed anywhere.
 
-### **🔹 Publish a Bicep Template**
+#### Login to Azure
 ```sh
 az login
 
@@ -29,13 +29,13 @@ $ACR_NAME=myacr.azurecr.io  # Change this to your ACR
 $BICEP_FILE=main.bicep               # Your Bicep file
 $TAG=latest                          # Change as needed (e.g., 'v1', 'dev', 'prod')
 ```
-# Publish Bicep to ACR
+#### Publish Bicep to ACR
 ```sh
 az bicep publish --file $BICEP_FILE --target br:$ACR_NAME/bicep/modules/core/storage/storageaccount:$TAG
 ```
 Once pushed, your Bicep template is **available in ACR** for deployments.
 
-## **2️⃣ Deploying Bicep Templates from ACR**
+### **2️⃣ Deploying Bicep Templates from ACR**
 Use az deployment group create to deploy directly from ACR.
 
 ```sh
@@ -47,7 +47,7 @@ az deployment group create \
   ```
 💡 Customize parameters like environmentSuffix to deploy across different environments.
 
-## **3️⃣ Pulling Bicep Templates for Editing**
+### **3️⃣ Pulling Bicep Templates for Editing**
 
 Bicep templates cannot be pulled directly from ACR, so you need ORAS.
 
@@ -61,26 +61,26 @@ Bicep templates cannot be pulled directly from ACR, so you need ORAS.
     `C:\Windows\System32`
 
 
-Retrieve a Bicep Template Using ORAS
+ - Retrieve a Bicep Template Using ORAS
 ```sh
 
 oras login divaacrweudev.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p "<your-access-token>"
 oras pull divaacrweudev.azurecr.io/bicep/modules/core/storage/storageaccount:latest
 ```
-📌 To get an access token, use:
+> 📌 To get an access token, use:
 
 ```sh
 
 az acr login --name divaacrweudev --expose-token
 ```
-## **4️⃣ Preview & Edit Bicep Templates in VS Code**
+### **4️⃣ Preview & Edit Bicep Templates in VS Code**
 Once pulled, open the Bicep file in VS Code:
 
 Try the Bicep Visualizer
 
 Open the Bicep file
 
-Press Ctrl + Shift + P → Search for "Bicep: Open Visualizer"
+Press Ctrl + Shift + P → Search for ***Bicep: Open Visualizer***
 
 See a graphical view of your deployment!
 
