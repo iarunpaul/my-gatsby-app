@@ -1,0 +1,63 @@
+---
+title: "Git Checkout Commit & Git Restore Branch"
+date: "2025-03-19"
+slug: " git-checkout-restore"
+hero_image: "./GIT-LF-CLRF.webp"
+hero_image_alt: "Git warning about LF and CRLF"
+hero_image_credit_text: "Dall-E by OpenAI"
+hero_image_credit_link: "https://openai.com/index/dall-e-3/"
+---
+
+## Git Checkout Commit & Git Restore Branch
+
+When working with Git, you might need to check out a specific commit or restore a branch. Here’s how to do it efficiently.
+
+### 🛠 Checking Out a Specific Commit
+
+To temporarily switch your working directory to a past commit:
+
+```sh
+git checkout <commit-hash>
+```
+
+🔹 **Warning**: This puts you in a detached HEAD state, meaning you're not on any branch. To create a new branch from this state:
+
+```sh
+git checkout -b new-branch-name
+```
+
+### 🔄 Restoring a Branch
+
+If you accidentally delete a branch and need to restore it:
+
+```sh
+git reflog
+```
+Find the commit where the branch was last active and then restore it:
+
+```sh
+git checkout -b branch-name <commit-hash>
+```
+
+### 🔄 Using `git restore` (Git 2.23+)
+
+For restoring files from a specific branch without switching branches:
+
+```sh
+git restore --source=<branch-name> -- <file-path>
+```
+
+Example:
+
+```sh
+git restore --source=develop -- src/config.json
+```
+
+This brings `config.json` from `develop` into the current branch without switching branches.
+
+---
+💡 **Pro Tip**: Use `git switch` instead of `git checkout` for changing branches in newer Git versions.
+
+Happy coding! 🚀
+
+
