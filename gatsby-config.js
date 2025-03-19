@@ -73,7 +73,22 @@ module.exports = {
               // setting this to '{ sh: "bash" }' will let you use
               // the language "sh" which will highlight using the
               // bash highlighter.
-              aliases: {},
+              aliases: {
+                ts: "typescript",
+                js: "javascript",
+                py: "python",
+                rb: "ruby",
+                go: "golang",
+                rs: "rust",
+                kt: "kotlin",
+                swift: "swift",
+                java: "java",
+                php: "php",
+                c: "c",
+                cpp: "cpp",
+                cs: "csharp",
+                sh: "bash",
+              },
               // This toggles the display of line numbers globally alongside the code.
               // To use it, add the following line in gatsby-browser.js
               // right after importing the prism color scheme:
