@@ -38,6 +38,11 @@ const Layout = ({ pageTitle, children }) => {
                 MicroBlog
               </Link>
             </li>
+            <li>
+              <a href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" target="_blank" rel="noopener noreferrer" className="text-white no-underline hover:underline">
+                Todo App
+              </a>
+            </li>
           </ul>
         </nav>
       </header>
