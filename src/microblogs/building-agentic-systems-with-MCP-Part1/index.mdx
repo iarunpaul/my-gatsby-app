@@ -21,10 +21,10 @@ This blog series will walk you through **building agentic systems with MCP in .N
 Here’s the roadmap:
 
 - **Episode 1 (this post):**  
-  What is MCP, why .NET, and building your first MCP servers (hello world + useful tool).
+  What is MCP, how they differ from APIs, How does MCP actually work, and building a simple first MCP server in .NET and connect and call using a MCP Inspector.
 
 - **Episode 2:**  
-  MCP Clients in .NET – how to connect and call servers.
+  Lets use llms and how they easily interact with standard MCP tools and enhance MCP workflows.
 
 - **Episode 3:**  
   Going Agentic – using multiple agents with single responsibility.
@@ -38,145 +38,243 @@ Here’s the roadmap:
 By the end, you’ll have a working understanding of MCP **and** a multi-agentic system you can adapt to your own projects.
 
 ---
+## Part 1: How MCP Works
 
-## 🧩 What is MCP?
+Welcome to the first episode of our series **“Building Agentic Systems with MCP in .NET.”**  
 
-**MCP (Model Context Protocol)** is a protocol that lets LLMs talk to external tools and data in a standardized way.  
-Instead of custom glue code, MCP defines a consistent pattern for:
+In this part we won’t even touch LLMs yet. Instead, we’ll answer:  
+👉 **How does MCP actually work?**  
 
-- Exposing **servers** that provide data or functionality (tools).  
-- Connecting **clients** (often LLM-powered apps) to those servers.  
-- Coordinating **agents** that each handle a single responsibility.  
+We’ll:  
+- Explain the role of an **MCP Server** and **MCP Client**.  
+- Compare MCP with a typical API.  
+- Build a simple server in .NET.  
+- Use **MCP Inspector** as a client to connect, discover, and call tools.  
+- Understand the **flow of messages**.  
 
-Think of it as the **API contract between your AI and your software ecosystem**.  
-
----
-
-## ⚙️ Why .NET for MCP?
-
-If you’re already in the Microsoft ecosystem, .NET is the natural choice:  
-
-- ✅ Enterprise-ready, high performance  
-- ✅ Rich ecosystem (EF Core, Dapper, Azure SDKs, etc.)  
-- ✅ Perfect for exposing **business APIs** as MCP tools  
-- ✅ Runs seamlessly in **cloud apps, serverless, or desktop**  
-
-Since MCP is language-agnostic, .NET is as good as Python or Node—but with all the tooling .NET developers love.
+By the end of this post, you’ll know the **mechanics of MCP**. Then in Part 2, we’ll talk about **why** MCP exists (and how LLMs fit into the story).
 
 ---
 
-## 📦 Packages You’ll Need
+## 🔄 MCP in a Nutshell
 
-For the examples in this post, you’ll need these NuGet packages:
+At its core, MCP is just a **protocol** for structured communication between:
 
+- **Server** → Exposes “tools” (functions) you want others to call.  
+- **Client** → Connects to the server, discovers the tools, and calls them.  
+
+Think of it like **JSON-RPC with conventions**:
+- Tools are described with **schemas** (inputs & outputs).  
+- Clients don’t need to read documentation—they can query the server to learn what it supports.  
+- The transport can be STDIO (pipes), sockets, or HTTP.  
+
+---
+
+## 🆚 MCP vs. a Typical API
+<table>
+    <thead>
+        <tr>
+            <th>Feature</th>
+            <th>REST/GraphQL API</th>
+            <th>MCP Protocol</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><strong>Discovery</strong></td>
+            <td>Requires docs/Swagger/OpenAPI</td>
+            <td>Built-in: client asks server</td>
+        </tr>
+        <tr>
+            <td><strong>Transport</strong></td>
+            <td>HTTP/HTTPS only</td>
+            <td>STDIO, WebSocket, HTTP, etc.</td>
+        </tr>
+        <tr>
+            <td><strong>Schema</strong></td>
+            <td>Optional / external spec</td>
+            <td>Always part of the protocol</td>
+        </tr>
+        <tr>
+            <td><strong>LLM-friendly</strong></td>
+            <td>Needs glue code / adapters</td>
+            <td>Native design (structured I/O)</td>
+        </tr>
+        <tr>
+            <td><strong>Caller</strong></td>
+            <td>Any app with HTTP</td>
+            <td>Any MCP-aware client (LLM, IDE, inspector)</td>
+        </tr>
+    </tbody>
+</table>
+
+💡 The **key difference** is: with MCP, **clients discover and adapt automatically**.  
+No hand-coded integrations, no brittle JSON responses.  
+
+---
+
+## ⚙️ Setting Up the Project
+
+We’ll use the **official preview SDK** from Microsoft: `ModelContextProtocol`.
+
+### Create a new console app
 ```bash
-dotnet add package McpDotNet
-dotnet add package System.Net.Http.Json
+dotnet new console -n McpDemo
+cd McpDemo
 ```
-McpDotNet → A simple .NET library for building MCP servers and clients.
+Add the packages
+```bash
+dotnet add package Microsoft.Extensions.Hosting --version 9.0.3
+dotnet add package ModelContextProtocol --version 0.2.0-preview.1
+dotnet add package System.Text.Json --version 9.0.3
+```
+Your `.csproj` will look like this:
 
-System.Net.Http.Json → Used for making typed HTTP requests (needed for the currency converter example).
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
 
-👋 Your First MCP Server – Hello World
-Let’s start with the simplest possible MCP server in .NET.
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.3" />
+    <PackageReference Include="ModelContextProtocol" Version="0.2.0-preview.1" />
+    <PackageReference Include="System.Text.Json" Version="9.0.3" />
+  </ItemGroup>
+</Project>
+```
+👋 Writing Your First MCP Server
+
+Edit `Program.cs` like this:
 
 ```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
+using System.ComponentModel;
 
-using McpDotNet;
+var builder = Host.CreateApplicationBuilder(args);
 
-public class HelloMcpServer : McpServerBase
+// log to stderr (MCP clients expect logs here)
+builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+
+// register the MCP server with STDIO transport
+builder.Services
+    .AddMcpServer()
+    .WithStdioServerTransport()
+    .WithToolsFromAssembly(); // reflection scan for [McpServerTool] methods
+
+await builder.Build().RunAsync();
+
+// ---------------- TOOLS ----------------
+
+// Tools are plain static methods with attributes.
+[McpServerToolType]
+public static class HelloTools
 {
-    public HelloMcpServer()
-    {
-        RegisterTool("hello", async (input, context) =>
-        {
-            return new McpResponse
-            {
-                Content = $"Hello MCP, {input["name"]}!"
-            };
-        });
-    }
+    [McpServerTool, Description("Greets the supplied name.")]
+    public static string Hello([Description("Name to greet")] string name = "world")
+        => $"Hello MCP, {name}!";
 }
-
-await new HelloMcpServer().StartAsync();
 ```
-🔍 How it works
-We create a server that extends McpServerBase.
+🧭 Testing with MCP Inspector
+Instead of writing a client, let’s use the official Inspector to act as one.
 
-We register a tool called hello.
-
-When the client calls hello, it responds with a greeting.
-
-Simple, but powerful: you just built your first MCP tool in .NET 🚀.
-
-🌍 Building a Useful MCP Server – Currency Converter
-Now let’s build something slightly more useful: a currency converter tool.
-
-```csharp
-using McpDotNet;
-using System.Net.Http.Json;
-
-public class CurrencyMcpServer : McpServerBase
-{
-    private readonly HttpClient _http = new HttpClient();
-
-    public CurrencyMcpServer()
-    {
-        RegisterTool("convert-currency", async (input, context) =>
-        {
-            var from = input["from"].ToString();
-            var to = input["to"].ToString();
-            var amount = decimal.Parse(input["amount"].ToString());
-
-            var rate = await GetExchangeRate(from, to);
-            var converted = amount * rate;
-
-            return new McpResponse
-            {
-                Content = $"{amount} {from} = {converted:F2} {to}"
-            };
-        });
-    }
-
-    private async Task<decimal> GetExchangeRate(string from, string to)
-    {
-        var url = $"https://api.exchangerate.host/latest?base={from}&symbols={to}";
-        var result = await _http.GetFromJsonAsync<ExchangeRateResponse>(url);
-        return result!.Rates[to];
-    }
-}
-
-public class ExchangeRateResponse
-{
-    public Dictionary<string, decimal> Rates { get; set; }
-}
-
-await new CurrencyMcpServer().StartAsync();
+Install & run Inspector
+```bash
+npx @modelcontextprotocol/inspector@latest
 ```
-✅ What this server does
-Registers a tool called convert-currency.
+It opens a local UI in your browser.
 
-Takes input parameters: from, to, and amount.
+Connect to your .NET server
 
-Calls an external exchange rate API.
+In the Inspector UI:
 
-Returns the converted result back to the client.
+Transport → 
+```arduino
+STDIO
+```
 
-This is where MCP starts to shine: your LLM or client app can now ask your server to perform currency conversion in a consistent, standardized way.
+Command → 
+```arduino
+dotnet
+```
 
-🚀 What’s Next?
-We’ve set the stage by:
+Arguments →
 
-Understanding what MCP is.
+```arduino
+run
+```
+Click Connect
 
-Seeing why .NET fits.
+Explore tools
 
-Building both a hello-world server and a useful currency converter server.
+Click List Tools in Inspector.
 
-In the next episode, we’ll flip perspectives:
-👉 Learn how to build an MCP client in .NET that can talk to these servers and fetch results.
+You should see:
 
-From there, we’ll move into multi-agent setups, multiple LLMs, and finally, real-world forecasting systems.
+> Hello (from our HelloTools class)
 
-💡 This is Episode 1 of the series Building Agentic Systems with MCP in .NET.
-Next up → Episode 2: MCP Client in .NET – Talking to the Server
+Click the tool, and Inspector shows its input schema (name).
+
+Call a tool 
+
+Enter input:
+
+> name: world
+
+Click Run Tool.
+
+Expected output:
+
+```
+Hello MCP, world!
+```
+🎉 Congrats, you just built your first MCP server and client interaction.
+
+## 🧠 Understanding the Flow
+Here’s what happened:
+
+Inspector (the client) connected to your server via STDIO.
+
+Client asked: “What tools do you support?” → Server responded with schemas.
+
+Client presented the tool in a UI form.
+
+You provided inputs.
+
+Inspector called the tool via MCP messages.
+
+Server returned a structured JSON response.
+
+👉 Unlike a REST API, the client didn’t need hardcoded knowledge of your server.
+It discovered everything dynamically.
+
+## 🎉 What’s Next?
+Now you know how MCP works:
+
+- Servers expose tools.
+
+- Clients discover and call them.
+
+- The difference from APIs is in built-in discovery, schema, and transport flexibility.
+
+But the **why** is still missing.
+- **Why** *should you care about MCP* when you already have APIs?
+- **Why** is it *particularly exciting for LLMs*?
+
+👉 That’s what we’ll cover in Part 2:
+
+- **Why** MCP exists
+
+- **How** it unlocks LLM integration
+
+- **A demo** where we connect your MCP server to an LLM client
+
+Stay tuned—it gets fun when the AI enters the scene! 🚀
+
+Happy coding 🍀!
