@@ -353,6 +353,36 @@ Try from the runner:
 
 You’ve now felt the loop: **decide → fill args → execute → structured result**.
 
+### Sample runner output
+```bash
+╭─    🏠   MCP                                                          | RAM: 26/31GB ⌛  10.041s ⏰  00:17:42 
+╰─ dotnet run --project ./AgentRunner/
+Restore complete (0.3s)
+You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy
+  AgentRunner succeeded (0.1s) → AgentRunner\bin\Debug\net9\AgentRunner.dll
+
+Build succeeded in 0.8s
+Try: 'hello Polly' or 'convert 25 usd to eur'. Ctrl+C to exit.
+convert 25 usd to eur
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool convert-currency --args {"amount":25,"from":"USD","to":"EUR"}
+→ "25 USD = 21.4385 EUR (rate 0.857540 @ 2025-09-03 23:18:08Z)"
+25 usd to eur
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool convert-currency --args {"amount":25,"from":"USD","to":"EUR"}
+→ "25 USD = 21.4403 EUR (rate 0.857610 @ 2025-09-03 23:33:04Z)"
+please convert 25 usd to eur
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool convert-currency --args {"amount":25,"from":"USD","to":"EUR"}
+→ "25 USD = 21.4401 EUR (rate 0.857603 @ 2025-09-03 23:34:04Z)"
+25 usd to inr
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool convert-currency --args {"amount":25,"from":"USD","to":"INR"}
+→ "25 USD = 2201.8313 INR (rate 88.073250 @ 2025-09-03 23:34:04Z)"
+hello Polly
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool hello --args {"name":"Polly"}
+→ Hello, Polly!
+hello Tiana
+[runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool hello --args {"name":"Tiana"}
+→ Hello, Tiana!
+say hello to Tiana
+
 ---
 
 ## Phase B — Swap to Claude Desktop as the runner
