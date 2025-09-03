@@ -257,12 +257,27 @@ public static class ServerInvoker
     public static async Task<string> InvokeAsync(string projectDir, string toolName, object args, CancellationToken ct)
     {
         var payload = JsonSerializer.Serialize(args);
-        var psi = new ProcessStartInfo("dotnet", $"run --project \"{projectDir}\" -- --tool \"{toolName}\" --args \"{payload}\"")
+
+        var psi = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
-            RedirectStandardError  = true,
+            RedirectStandardError = true,
             UseShellExecute = false
         };
+
+        // Each Add = one argv, no manual quoting needed
+        psi.ArgumentList.Add("run");
+        psi.ArgumentList.Add("--no-build");
+        psi.ArgumentList.Add("--project");
+        psi.ArgumentList.Add(projectDir);
+        psi.ArgumentList.Add("--");       // separates your app args
+        psi.ArgumentList.Add("--tool");
+        psi.ArgumentList.Add(toolName);
+        psi.ArgumentList.Add("--args");
+        psi.ArgumentList.Add(payload);    // raw JSON string, no escapes
+
+        Console.WriteLine($"[runner] launching: dotnet {string.Join(" ", psi.ArgumentList)}");
+
 
         using var p = Process.Start(psi)!;
         var stdout = await p.StandardOutput.ReadToEndAsync();
@@ -279,7 +294,7 @@ public static class ServerInvoker
 ```csharp
 using System.Text.Json;
 
-var serverProject = args.FirstOrDefault(a => a.StartsWith("--server="))?.Split('=')[1] ?? "../McpDemo";
+var serverProject = args.FirstOrDefault(a => a.StartsWith("--server="))?.Split('=')[1] ?? "./McpDemo";
 var reasoner = new HeuristicReasoner();
 var tools = ToolCatalog.All;
 
@@ -322,17 +337,16 @@ while (true)
 ### 4) Run it
 
 ```bash
-# terminal 1 — your server (McpDemo)
-cd McpDemo
-export EXCHANGERATE_API_KEY="528e1ccca45d0xxxxxxxxxxxxx"   # or set it in your shell
- dotnet run
+# terminal 1 — your MCP server (MCPHelloWorld)
+# from repo root
+ dotnet run --project ./MCPHelloWorld
 
 # terminal 2 — the runner
-cd AgentRunner
- dotnet run -- --server=../McpDemo
+# from repo root
+ dotnet run --project ./AgentRunner
 ```
 
-Try:
+Try from the runner:
 
 * `hello Tiana`
 * `convert 25 usd to eur`
