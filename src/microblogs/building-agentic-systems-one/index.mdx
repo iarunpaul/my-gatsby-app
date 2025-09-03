@@ -241,6 +241,48 @@ Hello MCP, world!
 ```
 🎉 Congrats, you just built your first MCP server and client interaction.
 
+## 🧪 Experimenting Further
+Let’s add another tool which can perform a more useful currency conversion. The Inspector will always reflect the latest changes.
+Add this to `Program.cs`:
+
+
+<iframe 
+  src="https://gist.github.com/iarunpaul/8eb6188538475ccaec445623d12c95f2.pibb"
+  width="100%"
+  height="800"
+  frameBorder="1"
+  scrolling="yes"
+/>
+
+Click List Tools in Inspector.
+
+You should see:
+
+> convert-currency (Converts an amount from one currency to another using exchangerate.host.)
+
+Click the tool, and Inspector shows its input schema (name).
+
+Call a tool 
+
+Enter input:
+
+> from: USD
+
+> to: INR
+
+> amount: 10
+
+Click Run Tool.
+
+Expected output:
+
+```
+10 USD = 880.5190 INR (rate 88.051898 @ 2025-09-03 16:24:06Z)
+```
+
+Yeppy! You just added a new tool and called it via Inspector.
+The same works with any MCP-aware client, including LLMs (which we’ll cover in Part 2).
+
 ## 🧠 Understanding the Flow
 Here’s what happened:
 
@@ -258,6 +300,7 @@ Server returned a structured JSON response.
 
 👉 Unlike a REST API, the client didn’t need hardcoded knowledge of your server.
 It discovered everything dynamically.
+
 
 ## 🎉 What’s Next?
 Now you know how MCP works:
