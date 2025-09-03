@@ -1,0 +1,427 @@
+---
+title: "Building Agentic Systems with MCP in .NET – Why MCP and where LLMs fit(Part 2)"
+description: "Part 2 of our series on building agentic systems with MCP in .NET. Understand why MCP exists and how LLMs fit into the picture."
+date: "2025-09-03"
+slug: "building-agentic-systems-two"
+tags: ["dotnet", "mcp", "ai", "agents", "llm", "csharp"]
+series: "Building Agentic Systems with MCP in .NET"
+hero_image: "./Part2-Title.png"
+hero_image_alt: "Part2 - Building Agentic Systems with MCP in .NET"
+hero_image_credit_text: "Pollo AI"
+hero_image_credit_link: "https://pollo.ai/home"
+---
+# Building Agentic Systems with MCP in .NET – Why MCP and where LLMs fit(Part 2)
+
+## Brief (read me first)
+
+We’ll **build a tiny local runner** first so you can *experience* how MCP tools are discovered and executed. Once that clicks, we’ll **swap the runner for an LLM**—specifically **Claude Desktop**—so the model can discover and call your tools automatically. The swap changes **only the runner**; your **.NET MCP server stays the same**.
+
+---
+
+## Visual cheat‑sheet
+
+### Phase A — Hands‑on (local runner)
+
+```
+User
+  │
+  ▼
+Local Runner (heuristic)
+  │   discovers known tools + fills args
+  ▼
+Your MCP Server  ──► Tools: hello, convert-currency
+         ▲
+         │ results
+         └─────────────── logs/telemetry/guardrails (on the server)
+```
+
+### Phase B — Swap to LLM (Claude Desktop)
+
+```
+User prompt
+  │
+  ▼
+Claude Desktop (LLM + MCP client)
+  │   dynamic discovery via MCP, schema-aware tool calls
+  ▼
+Your MCP Server  ──► Tools: hello, convert-currency
+         ▲
+         │ structured results
+         └─────────────── same guardrails stay on the server
+```
+
+> **What’s swapped later?** Only the runner (Local Runner ➜ Claude Desktop). Your server + tools + schemas don’t change.
+
+---
+
+## What you already have from Part 1
+
+* .NET 9 MCP server exposing two tools:
+
+  * `hello(name)`
+  * `convert-currency(from, to, amount, apiKey?)` → calls `https://api.exchangerate.host/convert`
+* Tested in **MCP Inspector** over **STDIO**.
+
+---
+
+## Phase A — Build a tiny local runner (10–15 min)
+
+We’ll create a minimal console app that:
+
+* chooses a tool (simple heuristic),
+* fills arguments,
+* (optionally) validates,
+* invokes your server to execute that tool.
+
+### 0) Folder layout
+
+```
+McpDemo/               # your Part 1 server
+AgentRunner/           # new console app: the "runner"
+```
+
+### 1) Create the runner project
+
+```bash
+# from the repo root
+dotnet new console -n AgentRunner && cd AgentRunner
+ dotnet add package System.Text.Json --version 9.0.3
+```
+
+> Keep it simple—no extra deps needed for this hands‑on.
+
+### 2) Add a temporary **direct tool switch** to your server
+
+Insert this block **at the very top** of `McpDemo/Program.cs` (before hosting). It lets the runner call your tools directly with `--tool` and `--args`.
+
+```csharp
+// ── DIRECT TOOL SWITCH (demo‑only) ────────────────────────────────────────────
+if (args.Length > 0 && args.Contains("--tool"))
+{
+    var toolIndex = Array.IndexOf(args, "--tool");
+    var name = args[toolIndex + 1];
+
+    var argsIndex = Array.IndexOf(args, "--args");
+    var json = argsIndex > -1 ? args[argsIndex + 1] : "{}";
+    var parsed = System.Text.Json.JsonDocument.Parse(json).RootElement;
+
+    if (name == "hello")
+    {
+        var nm = parsed.TryGetProperty("name", out var v) ? v.GetString() ?? "there" : "there";
+        Console.WriteLine($"Hello, {nm}!");
+        return;
+    }
+
+    if (name == "convert-currency")
+    {
+        var from   = parsed.GetProperty("from").GetString()!;
+        var to     = parsed.GetProperty("to").GetString()!;
+        var amount = parsed.GetProperty("amount").GetDouble();
+        var apiKey = parsed.TryGetProperty("apiKey", out var k) ? k.GetString() : null;
+
+        var result = await CurrencyConverter.ConvertAsync(from, to, amount, apiKey, CancellationToken.None);
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
+        return;
+    }
+
+    Console.Error.WriteLine($"Unknown tool: {name}");
+    Environment.Exit(1);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+```
+
+> This is purely for the hands‑on runner. Keep your *real* guardrails on the **server side**.
+
+### 3) Runner code — split into tidy files
+
+Create these files under `AgentRunner/`.
+
+**`Tooling.cs`**
+
+```csharp
+using System.Text.Json;
+
+public record ToolParameter(string Name);
+
+public record ToolDef(string Name, string Description, IReadOnlyDictionary<string, ToolParameter> Parameters);
+
+public static class ToolCatalog
+{
+    public static readonly ToolDef Hello = new(
+        Name: "hello",
+        Description: "Greets the given name quickly.",
+        Parameters: new Dictionary<string, ToolParameter>
+        {
+            ["name"] = new("name")
+        }
+    );
+
+    public static readonly ToolDef ConvertCurrency = new(
+        Name: "convert-currency",
+        Description: "Convert an amount between currencies using exchangerate.host/convert",
+        Parameters: new Dictionary<string, ToolParameter>
+        {
+            ["from"] = new("from"),
+            ["to"] = new("to"),
+            ["amount"] = new("amount"),
+            ["apiKey"] = new("apiKey")
+        }
+    );
+
+    public static IReadOnlyList<ToolDef> All => new[] { Hello, ConvertCurrency };
+}
+```
+
+**`Reasoner.cs`**
+
+```csharp
+public interface IReasoner
+{
+    Task<string> DecideToolAsync(string userMessage, IReadOnlyList<ToolDef> tools);
+    Task<Dictionary<string, object?>> FillArgsAsync(string userMessage, ToolDef tool);
+}
+
+// Heuristic baseline: good enough for hands‑on learning.
+public sealed class HeuristicReasoner : IReasoner
+{
+    public Task<string> DecideToolAsync(string userMessage, IReadOnlyList<ToolDef> tools)
+    {
+        var m = userMessage.ToLowerInvariant();
+        if (m.Contains("convert") || m.Contains(" usd ") || m.Contains(" eur "))
+            return Task.FromResult("convert-currency");
+        return Task.FromResult("hello");
+    }
+
+    public Task<Dictionary<string, object?>> FillArgsAsync(string userMessage, ToolDef tool)
+    {
+        var args = new Dictionary<string, object?>();
+        if (tool.Name == "hello")
+        {
+            var tokens = userMessage.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var last = tokens.LastOrDefault();
+            args["name"] = string.IsNullOrWhiteSpace(last) ? "there" : last.Trim('!', '.', ',');
+        }
+        else if (tool.Name == "convert-currency")
+        {
+            // naive parse like: "convert 25 usd to eur"
+            var upper = userMessage.ToUpperInvariant();
+            var toks = upper.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var t in toks)
+                if (double.TryParse(t, out var a)) { args["amount"] = a; break; }
+            args.TryAdd("from", toks.FirstOrDefault(t => t.Length == 3 && t.All(char.IsLetter)) ?? "USD");
+            args.TryAdd("to",   toks.LastOrDefault (t => t.Length == 3 && t.All(char.IsLetter)) ?? "EUR");
+        }
+        return Task.FromResult(args);
+    }
+}
+```
+
+**`Guardrails.cs`**
+
+```csharp
+public static class Guardrails
+{
+    public static bool IsAllowed(string toolName) => toolName is "hello" or "convert-currency";
+
+    public static (bool ok, string? error) ValidateArgs(ToolDef tool, Dictionary<string, object?> args)
+    {
+        // Keep it simple for the demo. You can add strict JSON Schema validation later.
+        if (tool.Name == "hello" && (!args.TryGetValue("name", out var n) || string.IsNullOrWhiteSpace(n?.ToString())))
+            return (false, "Missing name.");
+        if (tool.Name == "convert-currency")
+        {
+            if (!args.TryGetValue("from", out var f) || f is null) return (false, "Missing 'from'.");
+            if (!args.TryGetValue("to", out var t) || t is null) return (false, "Missing 'to'.");
+            if (!args.TryGetValue("amount", out var a) || a is null) return (false, "Missing 'amount'.");
+        }
+        return (true, null);
+    }
+
+    public static bool NeedsConfirmation(ToolDef tool, Dictionary<string, object?> args)
+    {
+        if (tool.Name == "convert-currency" && args.TryGetValue("amount", out var v) &&
+            double.TryParse(v?.ToString(), out var amt) && amt > 10000) return true;
+        return false;
+    }
+}
+```
+
+**`ServerInvoker.cs`**
+
+```csharp
+using System.Diagnostics;
+using System.Text.Json;
+
+public static class ServerInvoker
+{
+    public static async Task<string> InvokeAsync(string projectDir, string toolName, object args, CancellationToken ct)
+    {
+        var payload = JsonSerializer.Serialize(args);
+        var psi = new ProcessStartInfo("dotnet", $"run --project \"{projectDir}\" -- --tool \"{toolName}\" --args \"{payload}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError  = true,
+            UseShellExecute = false
+        };
+
+        using var p = Process.Start(psi)!;
+        var stdout = await p.StandardOutput.ReadToEndAsync();
+        var stderr = await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync(ct);
+        if (p.ExitCode != 0) throw new Exception(stderr);
+        return stdout.Trim();
+    }
+}
+```
+
+**`Program.cs`**
+
+```csharp
+using System.Text.Json;
+
+var serverProject = args.FirstOrDefault(a => a.StartsWith("--server="))?.Split('=')[1] ?? "../McpDemo";
+var reasoner = new HeuristicReasoner();
+var tools = ToolCatalog.All;
+
+Console.WriteLine("Try: 'hello Polly' or 'convert 25 usd to eur'. Ctrl+C to exit.");
+
+while (true)
+{
+    var msg = Console.ReadLine();
+    if (string.IsNullOrWhiteSpace(msg)) continue;
+
+    var toolName = await reasoner.DecideToolAsync(msg, tools);
+    if (!Guardrails.IsAllowed(toolName)) { Console.WriteLine($"Blocked: {toolName}"); continue; }
+
+    var tool = tools.First(t => t.Name == toolName);
+    var argsDict = await reasoner.FillArgsAsync(msg, tool);
+
+    var (ok, err) = Guardrails.ValidateArgs(tool, argsDict);
+    if (!ok) { Console.WriteLine($"Validation failed: {err}"); continue; }
+
+    if (Guardrails.NeedsConfirmation(tool, argsDict))
+    {
+        Console.WriteLine($"About to call '{tool.Name}' with: {JsonSerializer.Serialize(argsDict)}. Proceed? (y/N)");
+        if (!string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase))
+        { Console.WriteLine("Cancelled."); continue; }
+    }
+
+    try
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var response = await ServerInvoker.InvokeAsync(serverProject, tool.Name, argsDict, cts.Token);
+        Console.WriteLine($"→ {response}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Execution failed: {ex.Message}");
+    }
+}
+```
+
+### 4) Run it
+
+```bash
+# terminal 1 — your server (McpDemo)
+cd McpDemo
+export EXCHANGERATE_API_KEY="528e1ccca45d0xxxxxxxxxxxxx"   # or set it in your shell
+ dotnet run
+
+# terminal 2 — the runner
+cd AgentRunner
+ dotnet run -- --server=../McpDemo
+```
+
+Try:
+
+* `hello Tiana`
+* `convert 25 usd to eur`
+
+You’ve now felt the loop: **decide → fill args → execute → structured result**.
+
+---
+
+## Phase B — Swap to Claude Desktop as the runner
+
+Claude Desktop is an MCP‑aware client: it starts your local MCP server over STDIO, **discovers** its tools, and **calls** them with typed arguments during chat.
+
+### 1) Open Claude Desktop config
+
+In Claude Desktop: **Settings → Developer → Edit config**. This opens (or creates) `claude_desktop_config.json` in your profile directory.
+
+### 2) Add your server under `mcpServers`
+
+Use an **absolute path** to your server project and (optionally) pass secrets via `env`:
+
+```json
+{
+  "mcpServers": {
+    "mcpdemo": {
+      "command": "dotnet",
+      "args": ["run", "--project", "/ABSOLUTE/PATH/TO/McpDemo"],
+      "env": {
+        "EXCHANGERATE_API_KEY": "528e1ccca45d0xxxxxxxxxxxxx"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving.
+
+### 3) Chat with your tools
+
+Open a fresh Claude Desktop chat and try:
+
+* “Convert **25 USD to EUR** using my currency tool.”
+* “Say hello to **Polly**.”
+
+Claude will dynamically discover your server and select/call the right tool with structured arguments. Your **server‑side guardrails** remain in effect.
+
+### 4) (Optional) One‑click installs for teammates
+
+Package your server as a **Desktop Extension (.dxt)** so teammates can install it from Desktop’s Extensions UI instead of editing JSON.
+
+---
+
+## What changed vs the local runner?
+
+| Concern          | Local Runner (Phase A)                  | Claude Desktop (Phase B)                              |
+| ---------------- | --------------------------------------- | ----------------------------------------------------- |
+| Tool discovery   | Hardcoded knowledge                     | **Dynamic** via MCP (schemas pulled from your server) |
+| Argument filling | Naive heuristics                        | **LLM‑driven**, schema‑informed                       |
+| Transport        | Thin process shim (`dotnet run …`)      | **STDIO** orchestration by Desktop                    |
+| Guardrails       | Keep on server (validation, allowlists) | **Same**—server remains source of truth               |
+| Distribution     | N/A                                     | Optional **.dxt** one‑click install                   |
+
+> The **server doesn’t change**. Only the runner swaps from your console app to Claude Desktop.
+
+---
+
+## Safety notes (server‑side, regardless of runner)
+
+* **Validate** inputs for every tool (schema or custom checks).
+* **Allowlist** risky actions or require **confirmation** (e.g., large amounts).
+* Enforce **timeouts** and log **tool invocations** (scrub secrets).
+* Prefer idempotent operations or provide **dry‑run** modes.
+
+MCP helps because the **server owns the schemas** and clients speak a **standard protocol**, reducing client drift.
+
+---
+
+## Try this mini “play”
+
+1. In Claude: “Convert 25 USD to EUR with my MCP tools.”
+2. Then: “Say hello to Tiana.”
+3. Watch your server logs: you’ll see the model calling the right tool with typed args.
+
+---
+
+## Up next — Part 3: Building a .NET MCP Client
+
+We’ll build a **proper .NET MCP client** that:
+
+* connects over STDIO,
+* lists and inspects tools,
+* calls tools with structured args,
+* streams results and handles errors.
