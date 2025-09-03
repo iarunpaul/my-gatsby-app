@@ -386,13 +386,42 @@ Package your server as a **Desktop Extension (.dxt)** so teammates can install i
 
 ## What changed vs the local runner?
 
-| Concern          | Local Runner (Phase A)                  | Claude Desktop (Phase B)                              |
-| ---------------- | --------------------------------------- | ----------------------------------------------------- |
-| Tool discovery   | Hardcoded knowledge                     | **Dynamic** via MCP (schemas pulled from your server) |
-| Argument filling | Naive heuristics                        | **LLM‑driven**, schema‑informed                       |
-| Transport        | Thin process shim (`dotnet run …`)      | **STDIO** orchestration by Desktop                    |
-| Guardrails       | Keep on server (validation, allowlists) | **Same**—server remains source of truth               |
-| Distribution     | N/A                                     | Optional **.dxt** one‑click install                   |
+<table>
+    <thead>
+        <tr>
+            <th>Concern</th>
+            <th>Local Runner (Phase A)</th>
+            <th>Claude Desktop (Phase B)</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Tool discovery</td>
+            <td>Hardcoded knowledge</td>
+            <td><strong>Dynamic</strong> via MCP (schemas pulled from your server)</td>
+        </tr>
+        <tr>
+            <td>Argument filling</td>
+            <td>Naive heuristics</td>
+            <td><strong>LLM‑driven</strong>, schema‑informed</td>
+        </tr>
+        <tr>
+            <td>Transport</td>
+            <td>Thin process shim (<code>dotnet run …</code>)</td>
+            <td><strong>STDIO</strong> orchestration by Desktop</td>
+        </tr>
+        <tr>
+            <td>Guardrails</td>
+            <td>Keep on server (validation, allowlists)</td>
+            <td><strong>Same</strong>—server remains source of truth</td>
+        </tr>
+        <tr>
+            <td>Distribution</td>
+            <td>N/A</td>
+            <td>Optional <strong>.dxt</strong> one‑click install</td>
+        </tr>
+    </tbody>
+</table>
 
 > The **server doesn’t change**. Only the runner swaps from your console app to Claude Desktop.
 
@@ -425,3 +454,8 @@ We’ll build a **proper .NET MCP client** that:
 * lists and inspects tools,
 * calls tools with structured args,
 * streams results and handles errors.
+
+
+Stay tuned—it will be a fun ride! 🚀
+
+Happy coding 🍀!
