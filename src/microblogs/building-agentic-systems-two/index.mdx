@@ -10,6 +10,9 @@ hero_image_alt: "Part2 - Building Agentic Systems with MCP in .NET"
 hero_image_credit_text: "Pollo AI"
 hero_image_credit_link: "https://pollo.ai/home"
 ---
+
+
+
 # Building Agentic Systems with MCP in .NET – Why MCP and where LLMs fit(Part 2)
 
 ## Brief (read me first)
@@ -17,6 +20,44 @@ hero_image_credit_link: "https://pollo.ai/home"
 We’ll **build a tiny local runner** first so you can *experience* how MCP tools are discovered and executed. Once that clicks, we’ll **swap the runner for an LLM**—specifically **Claude Desktop**—so the model can discover and call your tools automatically. The swap changes **only the runner**; your **.NET MCP server stays the same**.
 
 ---
+{/* ![Alt text](./Part2-Title.png)
+
+![Gif](./Animation_Hello.gif)
+
+import Part2Title from './Part2-Title.png'
+
+<CustomImage 
+  src={Part2Title}
+  alt="Architecture diagram"
+  caption="System architecture overview"
+  width="80%"
+/>
+<FloatingImage 
+  src={Part2Title}
+  alt="Company logo"
+  position="right"
+  width="200px"
+/>
+<ImageGallery 
+  columns={3}
+  images={[
+    { src: Part2Title, alt: "Step 1", caption: "Setup" },
+    { src: Part2Title, alt: "Step 2", caption: "Config" },
+    { src: Part2Title, alt: "Step 3", caption: "Deploy" }
+  ]}
+/>
+You can control image width, but you need to use HTML syntax instead of pure markdown. Here are the best approaches:
+🎯 Quick Solutions:
+Option 1: HTML Syntax with Inline Styles (Simple)
+<img src={Part2Title} alt="Alt text" style={{width: "80%"}} />
+Option 3: Responsive Width Control
+<img 
+  src={Part2Title}
+  alt="Alt text"
+  className="w-full md:w-3/4 lg:w-1/2 mx-auto block rounded-lg shadow-lg"
+/>
+Option 2: HTML with Tailwind Classes (Recommended)
+<img src={Part2Title} alt="Alt text" className="w-3/4 mx-auto block" />  */}
 
 ## Visual cheat‑sheet
 
@@ -34,6 +75,7 @@ Your MCP Server  ──► Tools: hello, convert-currency
          │ results
          └─────────────── logs/telemetry/guardrails (on the server)
 ```
+
 
 ### Phase B — Swap to LLM (Claude Desktop)
 
@@ -84,8 +126,7 @@ AgentRunner/           # new console app: the "runner"
 
 ```bash
 # from the repo root
-dotnet new console -n AgentRunner && cd AgentRunner
- dotnet add package System.Text.Json --version 9.0.3
+dotnet new console -n AgentRunner && cd AgentRunner dotnet add package System.Text.Json --version 9.0.3
 ```
 
 > Keep it simple—no extra deps needed for this hands‑on.
@@ -354,7 +395,7 @@ Try from the runner:
 You’ve now felt the loop: **decide → fill args → execute → structured result**.
 
 ### Sample runner output
-```bash
+```sh
 ╭─    🏠   MCP                                                          | RAM: 26/31GB ⌛  10.041s ⏰  00:17:42 
 ╰─ dotnet run --project ./AgentRunner/
 Restore complete (0.3s)
@@ -382,6 +423,7 @@ hello Tiana
 [runner] launching: dotnet run --no-build --project ./MCPHelloWord -- --tool hello --args {"name":"Tiana"}
 → Hello, Tiana!
 say hello to Tiana
+```
 
 ---
 
