@@ -393,7 +393,11 @@ Claude Desktop is an MCP‑aware client: it starts your local MCP server over ST
 
 In Claude Desktop: **Settings → Developer → Edit config**. This opens (or creates) `claude_desktop_config.json` in your profile directory.
 
-### 2) Add your server under `mcpServers`
+### 2) Enable Developer Mode
+
+Make sure Developer Mode is enabled in Claude Desktop settings.
+
+### 3) Add your server under `mcpServers`
 
 Use an **absolute path** to your server project and (optionally) pass secrets via `env`:
 
@@ -402,9 +406,7 @@ Use an **absolute path** to your server project and (optionally) pass secrets vi
   "mcpServers": {
     "mcpdemo": {
       "command": "dotnet",
-      "args": ["run", "--project", "/ABSOLUTE/PATH/TO/McpDemo"],
-      "env": {
-        "EXCHANGERATE_API_KEY": "528e1ccca45d0xxxxxxxxxxxxx"
+      "args": ["run", "--no-build", "--project", "/ABSOLUTE/PATH/TO/McpDemo"]
       }
     }
   }
