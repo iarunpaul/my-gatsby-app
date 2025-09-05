@@ -3,7 +3,7 @@
 
 import React from "react"
 import { graphql, Link } from "gatsby"
-import Layout from "../components/Layout"
+import Layout from "../components/layout"
 
 const IndexPage = ({ data }) => {
   // Handle case where data might not be available

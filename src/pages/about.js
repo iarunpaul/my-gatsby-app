@@ -1,6 +1,6 @@
 import React from "react";
 import useRotateText from "../hooks/useRotateText";
-import { Layout } from "../components/Layout"
+import Layout from "../components/layout";
 import Seo from "../components/seo";
 
 const AboutPage = () => {
