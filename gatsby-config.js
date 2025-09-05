@@ -3,14 +3,16 @@
  *
  * See: https://www.gatsbyjs.com/docs/reference/config-files/gatsby-config/
  */
-
+require("dotenv").config({
+  path: `.env.${process.env.NODE_ENV}`,
+})
 /**
  * @type {import('gatsby').GatsbyConfig}
  */
 module.exports = {
   siteMetadata: {
-    title: `I | Arun Paul`,
-    description: `Personal website showcasing projects, certifications, and microblogs.`,
+     title: "Tech Innovation Hub",
+    description: "AI-powered professional insights and technical content",
     author: `@iarunpaul`,
     siteUrl: `https://web.iarunpaul.com`, // Update with your custom domain
   },
