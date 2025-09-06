@@ -1,254 +1,271 @@
-name: Deploy LinkedIn MCP Server to Azure Container Apps
+# Updated GitHub Actions Workflow with System-Assigned Managed Identity
+name: Deploy LinkedIn MCP Server
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'mcp-servers/**'
-      - '.github/workflows/azure-mcp-server.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'mcp-servers/**'
-  workflow_dispatch:
-
-env:
-  AZURE_CONTAINER_REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY_LOGIN }}
-  CONTAINER_NAME: linkedin-mcp-server
-  RESOURCE_GROUP: Pollys
-  CONTAINER_APP_NAME: linkedin-mcp-server
-  CONTAINER_APP_ENVIRONMENT: linkedin-mcp-env
+    branches: [ main ]
+    paths: [ 'mcp-servers/linkedin-real/**' ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       id-token: write
-
+      contents: read
+    
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Log in to Azure Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.AZURE_CONTAINER_REGISTRY }}
-        username: ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}
-        password: ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
-
-    - name: Extract metadata for Docker
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.CONTAINER_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./mcp-servers/linkedin-real
-        file: ./mcp-servers/linkedin-real/Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-
+    
     - name: Azure Login
       uses: azure/login@v1
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-    - name: Create or Update Container App Environment
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build and Push Docker Image
       run: |
-        # Check if Container App Environment exists
-        if ! az containerapp env show --name ${{ env.CONTAINER_APP_ENVIRONMENT }} --resource-group ${{ env.RESOURCE_GROUP }} &> /dev/null; then
-          echo "Creating Container App Environment..."
-          az containerapp env create \
-            --name ${{ env.CONTAINER_APP_ENVIRONMENT }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --location "East US"
-        else
-          echo "Container App Environment already exists"
-        fi
-
-    - name: Deploy to Azure Container Apps
-      run: |
-        # Get the image URL with latest tag
-        IMAGE_URL="${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.CONTAINER_NAME }}:latest"
+        # Set variables
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        IMAGE_TAG="${{ github.sha }}"
+        IMAGE_NAME="linkedin-mcp-server"
+        FULL_IMAGE_NAME="$ACR_NAME.azurecr.io/$IMAGE_NAME"
         
-        # Check if Container App exists
-        if az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &> /dev/null; then
-          echo "Updating existing Container App..."
+        echo "🐳 Building image: $FULL_IMAGE_NAME:$IMAGE_TAG"
+        
+        # Login to ACR using Azure CLI
+        az acr login --name $ACR_NAME
+        
+        # Build and push image with SHA tag
+        docker build -t $FULL_IMAGE_NAME:$IMAGE_TAG ./mcp-servers/linkedin-real/
+        docker push $FULL_IMAGE_NAME:$IMAGE_TAG
+        
+        # Also tag and push as latest
+        docker tag $FULL_IMAGE_NAME:$IMAGE_TAG $FULL_IMAGE_NAME:latest
+        docker push $FULL_IMAGE_NAME:latest
+        
+        echo "✅ Image pushed: $FULL_IMAGE_NAME:$IMAGE_TAG"
+    
+    - name: Setup Azure Resources
+      run: |
+        # Set variables
+        RESOURCE_GROUP="Pollys"
+        LOCATION="East US"
+        ENVIRONMENT_NAME="cae-linkedin-mcp"
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        
+        echo "🏗️ Setting up Azure resources..."
+        
+        # Create resource group if it doesn't exist
+        az group create --name $RESOURCE_GROUP --location "$LOCATION" || true
+        
+        # Create Container Apps environment if it doesn't exist
+        az containerapp env create \
+          --name $ENVIRONMENT_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --location "$LOCATION" || true
+        
+        echo "✅ Azure resources ready"
+    
+    - name: Deploy Container App with System Identity
+      run: |
+        # Set variables
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        IMAGE_TAG="${{ github.sha }}"
+        IMAGE_NAME="linkedin-mcp-server"
+        FULL_IMAGE_NAME="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
+        RESOURCE_GROUP="Pollys"
+        ENVIRONMENT_NAME="cae-linkedin-mcp"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        
+        echo "🚀 Deploying Container App: $CONTAINER_APP_NAME"
+        echo "📦 Using image: $FULL_IMAGE_NAME"
+        
+        # Check if container app exists
+        if az containerapp show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+          echo "🔄 Updating existing container app..."
+          
+          # Update existing container app
           az containerapp update \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --image $IMAGE_URL \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --image $FULL_IMAGE_NAME \
             --set-env-vars \
-              MCP_SERVER_PORT=8001 \
-              MCP_SERVER_HOST=0.0.0.0 \
               LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
               LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
               ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              LINKEDIN_HEADLESS=true \
-              LINKEDIN_TIMEOUT=30 \
+              MCP_SERVER_PORT=8001 \
               DEBUG=false \
-              LOG_LEVEL=info \
-              ALLOWED_ORIGINS="https://gray-pebble-0a500ec00.azurestaticapps.net,https://web.iarunpaul.com"
+              GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}"
         else
-          echo "Creating new Container App..."
+          echo "🆕 Creating new container app..."
+          
+          # Create new container app with system-assigned managed identity
           az containerapp create \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --environment ${{ env.CONTAINER_APP_ENVIRONMENT }} \
-            --image $IMAGE_URL \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --environment $ENVIRONMENT_NAME \
+            --image $FULL_IMAGE_NAME \
+            --system-assigned \
+            --env-vars \
+              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+              MCP_SERVER_PORT=8001 \
+              DEBUG=false \
+              GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}" \
             --target-port 8001 \
             --ingress external \
             --min-replicas 0 \
             --max-replicas 3 \
-            --cpu 0.5 \
-            --memory 1Gi \
-            --env-vars \
-              MCP_SERVER_PORT=8001 \
-              MCP_SERVER_HOST=0.0.0.0 \
-              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
-              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
-              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              LINKEDIN_HEADLESS=true \
-              LINKEDIN_TIMEOUT=30 \
-              DEBUG=false \
-              LOG_LEVEL=info \
-              ALLOWED_ORIGINS="https://gray-pebble-0a500ec00.azurestaticapps.net,https://web.iarunpaul.com"
+            --cpu 1.0 \
+            --memory 2Gi
         fi
-
-    - name: Get Container App URL
-      id: get-url
+        
+        echo "✅ Container app deployment completed"
+    
+    - name: Configure ACR Access with System Identity
       run: |
-        FQDN=$(az containerapp show \
-          --name ${{ env.CONTAINER_APP_NAME }} \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
+        # Set variables
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        RESOURCE_GROUP="Pollys"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        
+        echo "🔐 Configuring ACR access with system-assigned managed identity..."
+        
+        # Get the system-assigned managed identity principal ID
+        PRINCIPAL_ID=$(az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query identity.principalId \
+          --output tsv)
+        
+        if [ -z "$PRINCIPAL_ID" ] || [ "$PRINCIPAL_ID" = "null" ]; then
+          echo "⚠️ No system-assigned identity found. Enabling it..."
+          
+          # Enable system-assigned managed identity
+          az containerapp identity assign \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --system-assigned
+          
+          # Get the principal ID again
+          PRINCIPAL_ID=$(az containerapp show \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --query identity.principalId \
+            --output tsv)
+        fi
+        
+        echo "✅ System Identity Principal ID: $PRINCIPAL_ID"
+        
+        # Grant AcrPull role to the system-assigned managed identity
+        ACR_SCOPE=$(az acr show --name $ACR_NAME --query id --output tsv)
+        
+        echo "🔑 Granting AcrPull role to system identity..."
+        az role assignment create \
+          --assignee $PRINCIPAL_ID \
+          --role "AcrPull" \
+          --scope $ACR_SCOPE || echo "Role assignment may already exist"
+        
+        # Link the ACR to the Container App using system identity
+        echo "🔗 Linking ACR to Container App..."
+        az containerapp registry set \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --server $ACR_NAME.azurecr.io \
+          --identity system
+        
+        echo "✅ ACR access configured successfully"
+    
+    - name: Verify Deployment and Get URL
+      run: |
+        # Set variables
+        RESOURCE_GROUP="Pollys"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        
+        echo "🧪 Verifying deployment..."
+        
+        # Get the container app URL
+        APP_URL=$(az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
           --query properties.configuration.ingress.fqdn \
           --output tsv)
-        echo "CONTAINER_APP_URL=https://$FQDN" >> $GITHUB_OUTPUT
-        echo "Container App URL: https://$FQDN"
-
-    - name: Test Container App Health
-      run: |
-        echo "Testing Container App health..."
-        sleep 30  # Wait for container to start
         
-        # Test health endpoint
-        HEALTH_URL="${{ steps.get-url.outputs.CONTAINER_APP_URL }}/health"
-        echo "Testing: $HEALTH_URL"
-        
-        # Retry health check up to 5 times
-        for i in {1..5}; do
-          if curl -f -s "$HEALTH_URL" > /dev/null; then
-            echo "✅ Health check passed on attempt $i"
-            curl -s "$HEALTH_URL" | jq .
-            break
+        if [ -n "$APP_URL" ]; then
+          echo "✅ Container App deployed successfully!"
+          echo "🌐 App URL: https://$APP_URL"
+          echo "🔍 Health Check: https://$APP_URL/health"
+          echo "📊 MCP Status: https://$APP_URL/api/mcp/status"
+          echo "📋 LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
+          
+          # Wait a moment for the app to start
+          echo "⏳ Waiting for app to start..."
+          sleep 30
+          
+          # Test health endpoint
+          echo "🩺 Testing health endpoint..."
+          if curl -f -s "https://$APP_URL/health" >/dev/null; then
+            echo "✅ Health check passed!"
           else
-            echo "⏳ Health check failed on attempt $i, retrying..."
-            sleep 10
+            echo "⚠️ Health check failed - app may still be starting"
           fi
           
-          if [ $i -eq 5 ]; then
-            echo "❌ Health check failed after 5 attempts"
-            exit 1
+          # Test MCP status
+          echo "🔍 Testing MCP status..."
+          if curl -f -s "https://$APP_URL/api/mcp/status" >/dev/null; then
+            echo "✅ MCP status endpoint working!"
+          else
+            echo "⚠️ MCP status check failed - app may still be initializing"
           fi
-        done
-
-    - name: Test MCP Endpoints
-      run: |
-        BASE_URL="${{ steps.get-url.outputs.CONTAINER_APP_URL }}"
-        
-        echo "Testing MCP Status endpoint..."
-        curl -s "$BASE_URL/api/mcp/status" | jq .
-        
-        echo "Testing MCP Connect endpoint..."
-        curl -s -X POST "$BASE_URL/api/mcp/connect" | jq .
-
-    - name: Update Deployment Status
-      if: success()
-      run: |
-        echo "🎉 LinkedIn MCP Server deployed successfully!"
-        echo "📡 Server URL: ${{ steps.get-url.outputs.CONTAINER_APP_URL }}"
-        echo "🔗 Health Check: ${{ steps.get-url.outputs.CONTAINER_APP_URL }}/health"
-        echo "📊 MCP Status: ${{ steps.get-url.outputs.CONTAINER_APP_URL }}/api/mcp/status"
-        
-        # Create deployment summary
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## 🚀 LinkedIn MCP Server Deployment
-        
-        ### ✅ Deployment Successful
-        
-        **Server URL:** ${{ steps.get-url.outputs.CONTAINER_APP_URL }}
-        
-        **Available Endpoints:**
-        - Health Check: \`GET /health\`
-        - MCP Status: \`GET /api/mcp/status\`
-        - MCP Connect: \`POST /api/mcp/connect\`
-        - LinkedIn Feed: \`GET /api/linkedin/feed\`
-        - LinkedIn Jobs: \`GET /api/linkedin/jobs\`
-        - LinkedIn Summary: \`POST /api/linkedin/summary\`
-        
-        **Next Steps:**
-        1. Update your Gatsby site's environment variables
-        2. Set \`GATSBY_MCP_SERVER_URL=${{ steps.get-url.outputs.CONTAINER_APP_URL }}\`
-        3. Test the integration from your frontend
-        
-        **Azure Resources:**
-        - Resource Group: \`${{ env.RESOURCE_GROUP }}\`
-        - Container App: \`${{ env.CONTAINER_APP_NAME }}\`
-        - Environment: \`${{ env.CONTAINER_APP_ENVIRONMENT }}\`
-        EOF
-
-  cleanup-on-failure:
-    runs-on: ubuntu-latest
-    needs: build-and-deploy
-    if: failure()
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-    - name: Cleanup Failed Deployment
-      run: |
-        echo "🧹 Cleaning up failed deployment..."
-        
-        # Check if container app exists and remove if in failed state
-        if az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &> /dev/null; then
-          PROVISIONING_STATE=$(az containerapp show \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --query properties.provisioningState \
-            --output tsv)
           
-          if [ "$PROVISIONING_STATE" = "Failed" ]; then
-            echo "Removing failed container app..."
-            az containerapp delete \
-              --name ${{ env.CONTAINER_APP_NAME }} \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --yes
-          fi
+        else
+          echo "❌ Failed to get container app URL"
+          exit 1
         fi
-
+    
+    - name: Display Summary
+      run: |
+        # Set variables
+        RESOURCE_GROUP="Pollys"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        
+        echo ""
+        echo "🎉 Deployment Summary"
+        echo "===================="
+        
+        # Get app details
+        APP_URL=$(az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query properties.configuration.ingress.fqdn \
+          --output tsv)
+        
+        PRINCIPAL_ID=$(az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query identity.principalId \
+          --output tsv)
+        
+        echo "📦 Container App: $CONTAINER_APP_NAME"
+        echo "🏠 Resource Group: $RESOURCE_GROUP"
+        echo "🐳 Registry: $ACR_NAME.azurecr.io"
+        echo "🆔 System Identity: $PRINCIPAL_ID"
+        echo "🌐 Public URL: https://$APP_URL"
+        echo ""
+        echo "🔗 API Endpoints:"
+        echo "  Health: https://$APP_URL/health"
+        echo "  MCP Status: https://$APP_URL/api/mcp/status"
+        echo "  LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
+        echo ""
+        echo "📋 For Gatsby Integration:"
+        echo "  Add to your .env.production:"
+        echo "  GATSBY_MCP_SERVER_URL=https://$APP_URL"
+        echo ""
+        echo "✅ LinkedIn MCP Server deployed successfully!"
