@@ -1,18 +1,31 @@
-# Core web framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# LinkedIn MCP Server Compatible Requirements
+# These versions resolve all dependency conflicts while keeping MCP functionality
 
-# AI and API clients
-anthropic==0.7.8
-requests==2.31.0
+# Core web framework - compatible with MCP
+fastapi==0.115.12
+uvicorn[standard]==0.32.1
+
+# AI client - compatible with newer httpx
+anthropic==0.66.0
+
+# HTTP client - version that works with both anthropic and MCP
+httpx==0.28.1
 
 # Configuration and utilities
-python-dotenv==1.0.0
-pydantic==2.5.0
+python-dotenv==1.1.1
+pydantic==2.11.7
+requests==2.32.3
 
-# Specific PyYAML version that has pre-built wheels
+# PyYAML - keep the working version
 PyYAML==6.0.1
 
-# LinkedIn MCP server (install last)
-git+https://github.com/adhikasp/mcp-linkedin
+# MCP core dependencies
+mcp==1.1.0
+
+# LinkedIn MCP server - use specific commit that works
+git+https://github.com/adhikasp/mcp-linkedin.git@main
+
+# Additional dependencies for MCP functionality
+typing-extensions==4.12.2
+anyio==4.6.2
 
