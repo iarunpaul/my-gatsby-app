@@ -1,6 +1,18 @@
+# Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
+
+# AI and API clients
 anthropic==0.7.8
-python-dotenv==1.0.0
 requests==2.31.0
+
+# Configuration and utilities
+python-dotenv==1.0.0
+pydantic==2.5.0
+
+# Specific PyYAML version that has pre-built wheels
+PyYAML==6.0.1
+
+# LinkedIn MCP server (install last)
 git+https://github.com/adhikasp/mcp-linkedin
+
