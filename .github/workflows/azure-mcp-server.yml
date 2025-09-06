@@ -1,10 +1,10 @@
-# Updated GitHub Actions Workflow with System-Assigned Managed Identity
+# Fixed GitHub Actions Workflow - Correct Step Ordering
 name: Deploy LinkedIn MCP Server
 
 on:
   push:
     branches: [ main ]
-    paths: [ 'mcp-servers/linkedin-real/**', '.github/workflows/azure-mcp-server.yml' ]
+    paths: [ 'mcp-servers/linkedin-real/**' ]
 
 jobs:
   deploy:
@@ -56,7 +56,6 @@ jobs:
         RESOURCE_GROUP="Pollys"
         LOCATION="East US"
         ENVIRONMENT_NAME="cae-linkedin-mcp"
-        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
         
         echo "🏗️ Setting up Azure resources..."
         
@@ -71,45 +70,28 @@ jobs:
         
         echo "✅ Azure resources ready"
     
-    - name: Deploy Container App with System Identity
+    - name: Create Container App with System Identity (No Image Yet)
       run: |
         # Set variables
-        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
-        IMAGE_TAG="${{ github.sha }}"
-        IMAGE_NAME="linkedin-mcp-server"
-        FULL_IMAGE_NAME="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
         RESOURCE_GROUP="Pollys"
         ENVIRONMENT_NAME="cae-linkedin-mcp"
         CONTAINER_APP_NAME="linkedin-mcp-server"
         
-        echo "🚀 Deploying Container App: $CONTAINER_APP_NAME"
-        echo "📦 Using image: $FULL_IMAGE_NAME"
+        echo "🚀 Creating Container App with system identity (placeholder image)..."
         
         # Check if container app exists
         if az containerapp show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
-          echo "🔄 Updating existing container app..."
-          
-          # Update existing container app
-          az containerapp update \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --image $FULL_IMAGE_NAME \
-            --set-env-vars \
-              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
-              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
-              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              MCP_SERVER_PORT=8001 \
-              DEBUG=false \
-              GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}"
+          echo "✅ Container App already exists"
         else
-          echo "🆕 Creating new container app..."
+          echo "🆕 Creating new container app with system identity..."
           
-          # Create new container app with system-assigned managed identity
+          # Create container app with system identity using a placeholder image
+          # We'll update it with the real image after ACR access is configured
           az containerapp create \
             --name $CONTAINER_APP_NAME \
             --resource-group $RESOURCE_GROUP \
             --environment $ENVIRONMENT_NAME \
-            --image $FULL_IMAGE_NAME \
+            --image mcr.microsoft.com/azuredocs/containerapps-helloworld:latest \
             --system-assigned \
             --env-vars \
               LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
@@ -118,7 +100,7 @@ jobs:
               MCP_SERVER_PORT=8001 \
               DEBUG=false \
               GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}" \
-            --target-port 8001 \
+            --target-port 80 \
             --ingress external \
             --min-replicas 0 \
             --max-replicas 3 \
@@ -126,7 +108,7 @@ jobs:
             --memory 2Gi
         fi
         
-        echo "✅ Container app deployment completed"
+        echo "✅ Container app created with system identity"
     
     - name: Configure ACR Access with System Identity
       run: |
@@ -137,6 +119,16 @@ jobs:
         
         echo "🔐 Configuring ACR access with system-assigned managed identity..."
         
+        # Ensure system-assigned identity is enabled
+        az containerapp identity assign \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --system-assigned || true
+        
+        # Wait a moment for identity to be fully provisioned
+        echo "⏳ Waiting for identity provisioning..."
+        sleep 15
+        
         # Get the system-assigned managed identity principal ID
         PRINCIPAL_ID=$(az containerapp show \
           --name $CONTAINER_APP_NAME \
@@ -145,20 +137,8 @@ jobs:
           --output tsv)
         
         if [ -z "$PRINCIPAL_ID" ] || [ "$PRINCIPAL_ID" = "null" ]; then
-          echo "⚠️ No system-assigned identity found. Enabling it..."
-          
-          # Enable system-assigned managed identity
-          az containerapp identity assign \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --system-assigned
-          
-          # Get the principal ID again
-          PRINCIPAL_ID=$(az containerapp show \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query identity.principalId \
-            --output tsv)
+          echo "❌ Failed to get system identity principal ID"
+          exit 1
         fi
         
         echo "✅ System Identity Principal ID: $PRINCIPAL_ID"
@@ -172,6 +152,10 @@ jobs:
           --role "AcrPull" \
           --scope $ACR_SCOPE || echo "Role assignment may already exist"
         
+        # Wait for role assignment to propagate
+        echo "⏳ Waiting for role assignment to propagate..."
+        sleep 10
+        
         # Link the ACR to the Container App using system identity
         echo "🔗 Linking ACR to Container App..."
         az containerapp registry set \
@@ -181,6 +165,43 @@ jobs:
           --identity system
         
         echo "✅ ACR access configured successfully"
+        
+        # Verify the configuration
+        echo "🧪 Verifying ACR configuration..."
+        az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query properties.configuration.registries \
+          --output table
+    
+    - name: Update Container App with Real Image
+      run: |
+        # Set variables
+        ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
+        IMAGE_TAG="${{ github.sha }}"
+        IMAGE_NAME="linkedin-mcp-server"
+        FULL_IMAGE_NAME="$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG"
+        RESOURCE_GROUP="Pollys"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        
+        echo "🔄 Updating Container App with real image..."
+        echo "📦 Using image: $FULL_IMAGE_NAME"
+        
+        # Update container app with the real image (now that ACR access is configured)
+        az containerapp update \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --image $FULL_IMAGE_NAME \
+          --set-env-vars \
+            LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+            LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+            ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            MCP_SERVER_PORT=8001 \
+            DEBUG=false \
+            GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}" \
+          --target-port 8001
+        
+        echo "✅ Container app updated with real image successfully"
     
     - name: Verify Deployment and Get URL
       run: |
@@ -204,24 +225,29 @@ jobs:
           echo "📊 MCP Status: https://$APP_URL/api/mcp/status"
           echo "📋 LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
           
-          # Wait a moment for the app to start
-          echo "⏳ Waiting for app to start..."
-          sleep 30
+          # Wait for the app to start
+          echo "⏳ Waiting for app to start (60 seconds)..."
+          sleep 60
           
-          # Test health endpoint
+          # Test health endpoint with retries
           echo "🩺 Testing health endpoint..."
-          if curl -f -s "https://$APP_URL/health" >/dev/null; then
-            echo "✅ Health check passed!"
-          else
-            echo "⚠️ Health check failed - app may still be starting"
-          fi
+          for i in {1..5}; do
+            if curl -f -s "https://$APP_URL/health" >/dev/null; then
+              echo "✅ Health check passed!"
+              break
+            else
+              echo "⏳ Attempt $i/5 - waiting 15 seconds..."
+              sleep 15
+            fi
+          done
           
           # Test MCP status
           echo "🔍 Testing MCP status..."
           if curl -f -s "https://$APP_URL/api/mcp/status" >/dev/null; then
             echo "✅ MCP status endpoint working!"
           else
-            echo "⚠️ MCP status check failed - app may still be initializing"
+            echo "⚠️ MCP status check failed - checking logs..."
+            az containerapp logs show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP --tail 20 || true
           fi
           
         else
@@ -265,7 +291,8 @@ jobs:
         echo "  LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
         echo ""
         echo "📋 For Gatsby Integration:"
-        echo "  Add to your .env.production:"
+        echo "  Add to your GitHub secrets:"
         echo "  GATSBY_MCP_SERVER_URL=https://$APP_URL"
         echo ""
-        echo "✅ LinkedIn MCP Server deployed successfully!"
+        echo "✅ LinkedIn MCP Server deployed successfully with system-assigned identity!"
+
