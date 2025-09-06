@@ -23,7 +23,7 @@ PyYAML==6.0.1
 mcp==1.1.0
 
 # LinkedIn MCP server - use specific commit that works
-git+https://github.com/adhikasp/mcp-linkedin.git@main
+git+https://github.com/adhikasp/mcp-linkedin.git@master
 
 # Additional dependencies for MCP functionality
 typing-extensions==4.12.2
