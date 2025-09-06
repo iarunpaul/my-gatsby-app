@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths: [ 'mcp-servers/linkedin-real/**', '.github/workflows/azure-static-web-apps-gray-pebble-0a500ec00.yml' ]
+
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:

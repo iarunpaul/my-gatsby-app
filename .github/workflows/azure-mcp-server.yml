@@ -4,7 +4,7 @@ name: Deploy LinkedIn MCP Server
 on:
   push:
     branches: [ main ]
-    paths: [ 'mcp-servers/linkedin-real/**' ]
+    paths: [ 'mcp-servers/linkedin-real/**', '.github/workflows/azure-mcp-server.yml' ]
 
 jobs:
   deploy:
