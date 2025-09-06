@@ -1,4 +1,4 @@
-# Simplified GitHub Actions Workflow - Avoid Container Apps Environment Issues
+# Robust GitHub Actions Workflow - Handle Environment Provisioning Issues
 name: Deploy LinkedIn MCP Server
 
 on:
@@ -49,35 +49,115 @@ jobs:
         
         echo "✅ Image pushed: $FULL_IMAGE_NAME:$IMAGE_TAG"
     
-    - name: Setup Azure Resources (Minimal)
+    - name: Clean Up Previous Failed Resources
       run: |
         # Set variables
         RESOURCE_GROUP="Pollys"
-        LOCATION="East US"
+        ENVIRONMENT_NAME="cae-linkedin-mcp"
+        CONTAINER_APP_NAME="linkedin-mcp-server"
+        
+        echo "🧹 Cleaning up any failed resources..."
+        
+        # Delete failed container app if it exists
+        if az containerapp show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+          PROVISIONING_STATE=$(az containerapp show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP --query properties.provisioningState --output tsv)
+          if [ "$PROVISIONING_STATE" = "Failed" ]; then
+            echo "🗑️ Deleting failed container app..."
+            az containerapp delete --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP --yes || true
+          fi
+        fi
+        
+        # Delete failed environment if it exists
+        if az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+          ENV_PROVISIONING_STATE=$(az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --query properties.provisioningState --output tsv)
+          if [ "$ENV_PROVISIONING_STATE" = "Failed" ]; then
+            echo "🗑️ Deleting failed environment..."
+            az containerapp env delete --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --yes || true
+            # Wait for deletion to complete
+            sleep 30
+          fi
+        fi
+        
+        echo "✅ Cleanup completed"
+    
+    - name: Setup Azure Resources with Retry Logic
+      run: |
+        # Set variables
+        RESOURCE_GROUP="Pollys"
+        LOCATION="Central India"
         ENVIRONMENT_NAME="cae-linkedin-mcp"
         
-        echo "🏗️ Setting up minimal Azure resources..."
+        echo "🏗️ Setting up Azure resources with retry logic..."
         
         # Create resource group if it doesn't exist
         az group create --name $RESOURCE_GROUP --location "$LOCATION" || true
         
-        # Check if Container Apps environment exists
-        if ! az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
-          echo "🆕 Creating Container Apps environment (without Log Analytics)..."
+        # Function to create Container Apps environment with retries
+        create_environment() {
+          local attempt=1
+          local max_attempts=3
           
-          # Create Container Apps environment without Log Analytics workspace
-          az containerapp env create \
-            --name $ENVIRONMENT_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --location "$LOCATION" \
-            --logs-destination none
+          while [ $attempt -le $max_attempts ]; do
+            echo "🔄 Attempt $attempt/$max_attempts: Creating Container Apps environment..."
+            
+            if az containerapp env create \
+              --name $ENVIRONMENT_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --location "$LOCATION" \
+              --logs-destination none; then
+              
+              echo "✅ Container Apps environment created successfully"
+              return 0
+            else
+              echo "❌ Attempt $attempt failed"
+              if [ $attempt -lt $max_attempts ]; then
+                echo "⏳ Waiting 60 seconds before retry..."
+                sleep 60
+                
+                # Clean up failed attempt
+                az containerapp env delete --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --yes || true
+                sleep 30
+              fi
+              attempt=$((attempt + 1))
+            fi
+          done
+          
+          echo "❌ Failed to create environment after $max_attempts attempts"
+          return 1
+        }
+        
+        # Check if environment exists and is healthy
+        if az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
+          ENV_STATE=$(az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --query properties.provisioningState --output tsv)
+          if [ "$ENV_STATE" = "Succeeded" ]; then
+            echo "✅ Container Apps environment already exists and is healthy"
+          else
+            echo "⚠️ Environment exists but state is: $ENV_STATE"
+            echo "🗑️ Deleting and recreating..."
+            az containerapp env delete --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --yes || true
+            sleep 30
+            create_environment
+          fi
         else
-          echo "✅ Container Apps environment already exists"
+          create_environment
         fi
         
-        echo "✅ Azure resources ready"
+        # Verify environment is ready
+        echo "🔍 Verifying environment is ready..."
+        for i in {1..10}; do
+          ENV_STATE=$(az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --query properties.provisioningState --output tsv)
+          if [ "$ENV_STATE" = "Succeeded" ]; then
+            echo "✅ Environment is ready (state: $ENV_STATE)"
+            break
+          else
+            echo "⏳ Environment state: $ENV_STATE, waiting... ($i/10)"
+            sleep 30
+          fi
+        done
+        
+        echo "✅ Azure resources setup completed"
     
-    - name: Deploy Container App with ACR Admin Credentials
+    - name: Deploy Container App
       run: |
         # Set variables
         ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
@@ -91,67 +171,79 @@ jobs:
         
         echo "🚀 Deploying Container App: $CONTAINER_APP_NAME"
         echo "📦 Using image: $FULL_IMAGE_NAME"
-        echo "🔐 Using ACR admin credentials (simpler than managed identity)"
         
-        # Check if container app exists
-        if az containerapp show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP >/dev/null 2>&1; then
-          echo "🔄 Updating existing container app..."
-          
-          # Update existing container app
-          az containerapp update \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --image $FULL_IMAGE_NAME \
-            --registry-server $ACR_NAME.azurecr.io \
-            --registry-username $ACR_NAME \
-            --registry-password $ACR_PASSWORD \
-            --set-env-vars \
-              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
-              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
-              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              MCP_SERVER_PORT=8001 \
-              DEBUG=false \
-              GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}"
-        else
-          echo "🆕 Creating new container app..."
-          
-          # Create new container app with ACR admin credentials
-          az containerapp create \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --environment $ENVIRONMENT_NAME \
-            --image $FULL_IMAGE_NAME \
-            --registry-server $ACR_NAME.azurecr.io \
-            --registry-username $ACR_NAME \
-            --registry-password $ACR_PASSWORD \
-            --env-vars \
-              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
-              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
-              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
-              MCP_SERVER_PORT=8001 \
-              DEBUG=false \
-              GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}" \
-            --target-port 8001 \
-            --ingress external \
-            --min-replicas 0 \
-            --max-replicas 3 \
-            --cpu 1.0 \
-            --memory 2Gi
+        # Verify environment is ready before deployment
+        ENV_STATE=$(az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP --query properties.provisioningState --output tsv)
+        if [ "$ENV_STATE" != "Succeeded" ]; then
+          echo "❌ Environment not ready (state: $ENV_STATE)"
+          exit 1
         fi
         
-        echo "✅ Container app deployment completed"
+        # Deploy container app
+        echo "🔐 Using ACR admin credentials for authentication"
+        
+        az containerapp create \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --environment $ENVIRONMENT_NAME \
+          --image $FULL_IMAGE_NAME \
+          --registry-server $ACR_NAME.azurecr.io \
+          --registry-username $ACR_NAME \
+          --registry-password "$ACR_PASSWORD" \
+          --env-vars \
+            LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+            LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+            ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            MCP_SERVER_PORT=8001 \
+            DEBUG=false \
+            GATSBY_LINKEDIN_USERNAME="${{ secrets.GATSBY_LINKEDIN_USERNAME }}" \
+          --target-port 8001 \
+          --ingress external \
+          --min-replicas 0 \
+          --max-replicas 3 \
+          --cpu 1.0 \
+          --memory 2Gi
+        
+        echo "✅ Container app deployment initiated"
     
-    - name: Verify Deployment and Get URL
+    - name: Wait for Deployment and Verify
       run: |
         # Set variables
         RESOURCE_GROUP="Pollys"
         CONTAINER_APP_NAME="linkedin-mcp-server"
         
-        echo "🧪 Verifying deployment..."
+        echo "⏳ Waiting for deployment to complete..."
         
-        # Wait for deployment to complete
-        echo "⏳ Waiting for deployment to stabilize (30 seconds)..."
-        sleep 30
+        # Wait for provisioning to complete
+        for i in {1..20}; do
+          PROVISIONING_STATE=$(az containerapp show \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --query properties.provisioningState \
+            --output tsv)
+          
+          echo "📊 Provisioning state: $PROVISIONING_STATE ($i/20)"
+          
+          if [ "$PROVISIONING_STATE" = "Succeeded" ]; then
+            echo "✅ Container App provisioned successfully!"
+            break
+          elif [ "$PROVISIONING_STATE" = "Failed" ]; then
+            echo "❌ Container App provisioning failed"
+            
+            # Get detailed error information
+            echo "📋 Getting detailed error information..."
+            az containerapp show \
+              --name $CONTAINER_APP_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --query properties \
+              --output json
+            
+            exit 1
+          else
+            echo "⏳ Still provisioning... waiting 30 seconds"
+            sleep 30
+          fi
+        done
         
         # Get the container app URL
         APP_URL=$(az containerapp show \
@@ -163,56 +255,37 @@ jobs:
         if [ -n "$APP_URL" ]; then
           echo "✅ Container App deployed successfully!"
           echo "🌐 App URL: https://$APP_URL"
-          echo "🔍 Health Check: https://$APP_URL/health"
-          echo "📊 MCP Status: https://$APP_URL/api/mcp/status"
-          echo "📋 LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
           
-          # Check provisioning state
-          PROVISIONING_STATE=$(az containerapp show \
-            --name $CONTAINER_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query properties.provisioningState \
-            --output tsv)
+          # Wait for the app to start
+          echo "⏳ Waiting for app to start (90 seconds)..."
+          sleep 90
           
-          echo "📋 Provisioning State: $PROVISIONING_STATE"
-          
-          if [ "$PROVISIONING_STATE" = "Succeeded" ]; then
-            # Wait for the app to start
-            echo "⏳ Waiting for app to start (60 seconds)..."
-            sleep 60
-            
-            # Test health endpoint with retries
-            echo "🩺 Testing health endpoint..."
-            for i in {1..5}; do
-              if curl -f -s "https://$APP_URL/health" >/dev/null; then
-                echo "✅ Health check passed!"
-                break
+          # Test health endpoint with retries
+          echo "🩺 Testing health endpoint..."
+          for i in {1..10}; do
+            if curl -f -s "https://$APP_URL/health" >/dev/null; then
+              echo "✅ Health check passed!"
+              
+              # Test MCP status
+              echo "🔍 Testing MCP status..."
+              if curl -f -s "https://$APP_URL/api/mcp/status" >/dev/null; then
+                echo "✅ MCP status endpoint working!"
               else
-                echo "⏳ Attempt $i/5 - waiting 15 seconds..."
-                sleep 15
+                echo "⚠️ MCP status check failed - app may still be initializing"
               fi
-            done
-            
-            # Test MCP status
-            echo "🔍 Testing MCP status..."
-            if curl -f -s "https://$APP_URL/api/mcp/status" >/dev/null; then
-              echo "✅ MCP status endpoint working!"
+              break
             else
-              echo "⚠️ MCP status check failed - checking logs..."
-              az containerapp logs show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP --tail 20 || true
+              echo "⏳ Health check attempt $i/10 - waiting 15 seconds..."
+              sleep 15
             fi
-          else
-            echo "⚠️ Container App provisioning state: $PROVISIONING_STATE"
-            echo "📋 Checking logs for issues..."
-            az containerapp logs show --name $CONTAINER_APP_NAME --resource-group $RESOURCE_GROUP --tail 20 || true
-          fi
+          done
           
         else
           echo "❌ Failed to get container app URL"
           exit 1
         fi
     
-    - name: Display Summary
+    - name: Display Final Summary
       run: |
         # Set variables
         RESOURCE_GROUP="Pollys"
@@ -220,8 +293,8 @@ jobs:
         ACR_NAME="${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}"
         
         echo ""
-        echo "🎉 Deployment Summary"
-        echo "===================="
+        echo "🎉 Final Deployment Summary"
+        echo "=========================="
         
         # Get app details
         APP_URL=$(az containerapp show \
@@ -236,10 +309,17 @@ jobs:
           --query properties.provisioningState \
           --output tsv)
         
+        RUNNING_STATE=$(az containerapp show \
+          --name $CONTAINER_APP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query properties.runningStatus \
+          --output tsv)
+        
         echo "📦 Container App: $CONTAINER_APP_NAME"
         echo "🏠 Resource Group: $RESOURCE_GROUP"
-        echo "🐳 Registry: $ACR_NAME.azurecr.io (using admin credentials)"
+        echo "🐳 Registry: $ACR_NAME.azurecr.io"
         echo "📊 Provisioning State: $PROVISIONING_STATE"
+        echo "🏃 Running State: $RUNNING_STATE"
         echo "🌐 Public URL: https://$APP_URL"
         echo ""
         echo "🔗 API Endpoints:"
@@ -248,11 +328,13 @@ jobs:
         echo "  LinkedIn Summary: https://$APP_URL/api/linkedin/summary"
         echo ""
         echo "📋 For Gatsby Integration:"
-        echo "  Add to your GitHub secrets:"
+        echo "  Add this to your GitHub secrets:"
         echo "  GATSBY_MCP_SERVER_URL=https://$APP_URL"
         echo ""
+        
         if [ "$PROVISIONING_STATE" = "Succeeded" ]; then
-          echo "✅ LinkedIn MCP Server deployed successfully!"
+          echo "🎉 LinkedIn MCP Server deployed successfully!"
+          echo "🚀 Your LinkedIn integration is now live!"
         else
           echo "⚠️ Deployment completed but provisioning state is: $PROVISIONING_STATE"
           echo "   Check the Azure portal for more details."
