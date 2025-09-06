@@ -46,6 +46,9 @@ jobs:
           output_location: "public" # Built app content directory - optional
           github_id_token: ${{ steps.idtoken.outputs.result }}
           ###### End of Repository/Build Configurations ######
+        env:
+          # Add Gatsby environment variables here
+          GATSBY_MCP_SERVER_URL: ${{ secrets.GATSBY_MCP_SERVER_URL }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
