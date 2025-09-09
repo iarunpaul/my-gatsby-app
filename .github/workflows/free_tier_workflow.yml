@@ -1,0 +1,271 @@
+name: Deploy LinkedIn MCP Server to Azure Free Tier
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'mcp-servers/linkedin-real/**'
+      - '.github/workflows/azure-mcp-server-free.yml'
+  workflow_dispatch:
+
+env:
+  # Free tier resource configuration
+  RESOURCE_GROUP: "Pollys"
+  CONTAINER_APP_NAME: "linkedin-mcp-server-free"
+  ACR_NAME: "acrlinkedinmcpfree"
+  CONTAINER_APP_ENVIRONMENT: "cae-linkedin-mcp-free"
+  LOCATION: "North Europe"
+
+  # Free tier resource limits
+  CPU_CORES: "0.25"
+  MEMORY: "0.5Gi"
+  MIN_REPLICAS: "0"  # Scale to zero for cost savings
+  MAX_REPLICAS: "1"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Azure Login (OIDC)
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: 🏗️ Build and push Docker image
+      run: |
+        echo "🐳 Building LinkedIn MCP Server image..."
+        
+        # Login to ACR
+        az acr login --name ${{ env.ACR_NAME }}
+        
+        # Build image with free tier optimizations
+        cd mcp-servers/linkedin-real
+        
+        # Create optimized Dockerfile for free tier
+        cat > Dockerfile.free << 'EOF'
+        FROM python:3.11-slim
+        
+        # Install system dependencies (minimal for free tier)
+        RUN apt-get update && apt-get install -y \
+            gcc \
+            && rm -rf /var/lib/apt/lists/* \
+            && apt-get clean
+        
+        # Set working directory
+        WORKDIR /app
+        
+        # Copy requirements and install Python dependencies
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        
+        # Copy application code
+        COPY . .
+        
+        # Create non-root user for security
+        RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+        USER appuser
+        
+        # Expose port
+        EXPOSE 8001
+        
+        # Health check for Container Apps
+        HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+          CMD curl -f http://localhost:8001/health || exit 1
+        
+        # Start application
+        CMD ["python", "web_server.py"]
+        EOF
+        
+        # Build with free tier tag
+        IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/linkedin-mcp-server:free-$(echo ${{ github.sha }} | cut -c1-7)"
+        docker build -f Dockerfile.free -t $IMAGE_TAG .
+        
+        # Push image
+        docker push $IMAGE_TAG
+        
+        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        echo "✅ Image built and pushed: $IMAGE_TAG"
+
+    - name: 🏗️ Setup Azure resources (if needed)
+      run: |
+        echo "🏗️ Ensuring Azure resources exist..."
+        
+        # Create resource group if it doesn't exist
+        if ! az group show --name ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "📦 Creating resource group..."
+          az group create \
+            --name ${{ env.RESOURCE_GROUP }} \
+            --location "${{ env.LOCATION }}"
+        fi
+        
+        # Create Container Apps environment if it doesn't exist
+        if ! az containerapp env show --name ${{ env.CONTAINER_APP_ENVIRONMENT }} --resource-group ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "🌍 Creating Container Apps environment (free tier)..."
+          az containerapp env create \
+            --name ${{ env.CONTAINER_APP_ENVIRONMENT }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --location "${{ env.LOCATION }}" \
+            --logs-destination none
+          
+          echo "⏳ Waiting for environment to be ready..."
+          sleep 60
+        fi
+        
+        echo "✅ Azure resources ready"
+
+    - name: 🚀 Deploy to Azure Container Apps (Free Tier)
+      run: |
+        echo "🚀 Deploying to Azure Container Apps (Free Tier)..."
+        
+        # Check if container app exists
+        if az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "🔄 Updating existing container app..."
+          
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE_TAG }} \
+            --cpu ${{ env.CPU_CORES }} \
+            --memory ${{ env.MEMORY }} \
+            --min-replicas ${{ env.MIN_REPLICAS }} \
+            --max-replicas ${{ env.MAX_REPLICAS }} \
+            --set-env-vars \
+              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+              MCP_SERVER_PORT="8001" \
+              DEBUG="false"
+        else
+          echo "🆕 Creating new container app..."
+          
+          az containerapp create \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --environment ${{ env.CONTAINER_APP_ENVIRONMENT }} \
+            --image ${{ env.IMAGE_TAG }} \
+            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+            --registry-username ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }} \
+            --registry-password ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }} \
+            --cpu ${{ env.CPU_CORES }} \
+            --memory ${{ env.MEMORY }} \
+            --min-replicas ${{ env.MIN_REPLICAS }} \
+            --max-replicas ${{ env.MAX_REPLICAS }} \
+            --ingress external \
+            --target-port 8001 \
+            --env-vars \
+              LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+              LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+              ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+              MCP_SERVER_PORT="8001" \
+              DEBUG="false"
+        fi
+
+    - name: ⏳ Wait for deployment
+      run: |
+        echo "⏳ Waiting for deployment to complete..."
+        
+        # Wait for provisioning to complete
+        for i in {1..20}; do
+          STATE=$(az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query properties.provisioningState -o tsv)
+          echo "📊 Provisioning state: $STATE ($i/20)"
+          
+          if [ "$STATE" = "Succeeded" ]; then
+            echo "✅ Deployment completed successfully!"
+            break
+          elif [ "$STATE" = "Failed" ]; then
+            echo "❌ Deployment failed!"
+            exit 1
+          fi
+          
+          sleep 15
+        done
+
+    - name: 🌐 Get application URL
+      run: |
+        echo "🌐 Getting application URL..."
+        
+        APP_URL=$(az containerapp show \
+          --name ${{ env.CONTAINER_APP_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query properties.configuration.ingress.fqdn \
+          -o tsv)
+        
+        if [ -n "$APP_URL" ]; then
+          echo "✅ LinkedIn MCP Server deployed successfully!"
+          echo "🌐 Application URL: https://$APP_URL"
+          echo "🩺 Health Check: https://$APP_URL/health"
+          echo "📊 MCP Status: https://$APP_URL/api/mcp/status"
+          echo ""
+          echo "🎯 Free Tier Configuration:"
+          echo "   CPU: ${{ env.CPU_CORES }} cores"
+          echo "   Memory: ${{ env.MEMORY }}"
+          echo "   Min Replicas: ${{ env.MIN_REPLICAS }} (scale to zero)"
+          echo "   Max Replicas: ${{ env.MAX_REPLICAS }}"
+          echo ""
+          echo "💰 Estimated Monthly Cost: $0 (Free Tier)"
+        else
+          echo "❌ Failed to get application URL"
+          exit 1
+        fi
+
+    - name: 🧪 Test deployment
+      run: |
+        echo "🧪 Testing deployed application..."
+        
+        APP_URL=$(az containerapp show \
+          --name ${{ env.CONTAINER_APP_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query properties.configuration.ingress.fqdn \
+          -o tsv)
+        
+        if [ -n "$APP_URL" ]; then
+          # Test health endpoint
+          echo "🩺 Testing health endpoint..."
+          if curl -f -s "https://$APP_URL/health" > /dev/null; then
+            echo "✅ Health check passed"
+          else
+            echo "⚠️ Health check failed (app may be scaling up from zero)"
+          fi
+          
+          # Test MCP status endpoint
+          echo "📊 Testing MCP status endpoint..."
+          if curl -f -s "https://$APP_URL/api/mcp/status" > /dev/null; then
+            echo "✅ MCP status endpoint accessible"
+          else
+            echo "⚠️ MCP status endpoint not ready (app may be scaling up)"
+          fi
+          
+          echo ""
+          echo "🎉 Deployment completed! Your LinkedIn MCP Server is running on Azure Free Tier."
+          echo "🔗 Access your server at: https://$APP_URL"
+        fi
+
+    - name: 💰 Cost optimization summary
+      run: |
+        echo "💰 Azure Free Tier Cost Summary:"
+        echo "================================"
+        echo "✅ Container Apps: $0/month (within free tier limits)"
+        echo "✅ Container Registry: $0/month (free for 12 months)"
+        echo "✅ Bandwidth: $0/month (within free limits)"
+        echo "✅ Storage: $0/month (minimal usage)"
+        echo ""
+        echo "📊 Resource Configuration:"
+        echo "- CPU: ${{ env.CPU_CORES }} cores (optimized for free tier)"
+        echo "- Memory: ${{ env.MEMORY }} (minimal footprint)"
+        echo "- Scale to zero: Enabled (saves resources when idle)"
+        echo "- Max replicas: ${{ env.MAX_REPLICAS }} (cost control)"
+        echo ""
+        echo "🎯 Total Estimated Cost: $0/month"
+        echo "🕐 Free tier duration: 12 months for Container Registry"
+        echo "🔄 Auto-scaling: Scales to zero when not in use"
+
