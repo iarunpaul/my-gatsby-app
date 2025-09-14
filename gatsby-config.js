@@ -125,7 +125,14 @@ module.exports = {
           },
         ],
       },
+    },// API routes support
+    {
+      resolve: `gatsby-plugin-page-creator`,
+      options: {
+        path: `${__dirname}/src/api`,
+      },
     },
+
     // Optional: Add sitemap
     `gatsby-plugin-sitemap`,
     {
