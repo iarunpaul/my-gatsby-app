@@ -19,6 +19,7 @@ module.exports = {
   plugins: [
     `gatsby-plugin-image`,
     `gatsby-plugin-tailwindcss`, // Add Tailwind CSS support
+    `gatsby-plugin-react-helmet`,
     `gatsby-plugin-postcss`, // Add PostCSS support
     `gatsby-transformer-sharp`,
     `gatsby-plugin-sharp`,
@@ -132,6 +133,13 @@ module.exports = {
         path: `${__dirname}/src/api`,
       },
     },
+    // // Enable Gatsby Functions for API routes
+    // {
+    //   resolve: `gatsby-plugin-gatsby-cloud`,
+    //   options: {
+    //     // This enables Gatsby Functions
+    //   },
+    // },
 
     // Optional: Add sitemap
     `gatsby-plugin-sitemap`,

@@ -143,11 +143,14 @@ AI: Creates engaging professional content with hashtags
 ```
 
 ### **API Testing**
-```bash
+
 # Test API endpoints directly
-curl -X POST http://localhost:8000/api/career-copilot \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Find software engineer jobs"}'
+```powershell
+# Windows equivalent using PowerShell
+Invoke-RestMethod -Uri "http://localhost:8000/api/career-copilot" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"message": "Find software engineer jobs"}'
 ```
 
 ## 🎨 UI Components
