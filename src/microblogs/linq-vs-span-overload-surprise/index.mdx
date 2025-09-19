@@ -94,3 +94,7 @@ return JsonSerializer.Deserialize<RgsMapLineModel>(result.ToString());
 While this feels like a breaking change, it’s actually the compiler **preferring high-performance APIs** (`Span<T>`). That’s good for performance, but it means our code needs to be explicit about intent.  
 
 If you’re experimenting with **VS Insiders**, watch out for these tweaks!
+
+> A good read : [Understanding C# overload-resolution](https://learn.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/10.0/csharp-overload-resolution)
+
+Peace... 🍀
