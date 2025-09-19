@@ -27,7 +27,7 @@ var endPart = request.SearchTerm.Split(" ").Reverse().FirstOrDefault();
 
 ### ✅ In Visual Studio 2022
 - `Split()` returns `string[]`.
-- `.Reverse()` resolves to `Enumerable.Reverse(IEnumerable<T>)`, which **returns IEnumerable<T>**.
+- `.Reverse()` resolves to `Enumerable.Reverse(IEnumerable&lt;T&gt;)`, which **returns IEnumerable&lt;T&gt;**.
 - `.FirstOrDefault()` works.
 
 ### ❌ In Visual Studio 2026 Insiders
