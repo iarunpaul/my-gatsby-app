@@ -1,0 +1,96 @@
+---
+title: "Breaking Changes in VS Insiders: LINQ vs Span Overload Surprises"
+date: "2025-09-19"
+description: "How subtle overload changes in Visual Studio Insiders broke my build — and how I fixed them."
+slug: "linq-vs-span-overload-surprise"
+tags: ["C#", "Visual Studio", "VS Insiders", "Span", "LINQ"]
+hero_image: "./Page_Title.png"
+hero_image_alt: "LINQ vs Span Overload Surprises"
+hero_image_credit_text: "Dall-E by OpenAI"
+hero_image_credit_link: "https://openai.com/index/dall-e-3/"
+---
+
+When I tried building some code in the **Visual Studio 2026 Insiders** build, something strange happened:  
+**perfectly valid code in VS 2022 started failing.**
+
+After digging in, I realized it wasn’t a bug in my code — it was a change in **compiler overload resolution**.
+
+---
+
+## The LINQ vs Span Problem
+
+Consider this code:
+
+```csharp
+var endPart = request.SearchTerm.Split(" ").Reverse().FirstOrDefault();
+```
+
+### ✅ In Visual Studio 2022
+- `Split()` returns `string[]`.
+- `.Reverse()` resolves to `Enumerable.Reverse(IEnumerable<T>)`, which **returns IEnumerable<T>**.
+- `.FirstOrDefault()` works.
+
+### ❌ In Visual Studio 2026 Insiders
+- `string[]` is implicitly convertible to `Span<string>`.
+- `.Reverse()` resolves to `MemoryExtensions.Reverse(Span<T>)`, which **returns void** (in-place).
+- `.FirstOrDefault()` fails to compile.
+
+---
+
+## Fix 1 – Be Explicit with LINQ
+
+Force the LINQ overload:
+
+```csharp
+var endPart = request.SearchTerm
+    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+    .AsEnumerable()
+    .Reverse()
+    .FirstOrDefault();
+```
+
+---
+
+## Fix 2 – Use LastOrDefault
+
+Since I just needed the **last token**, this is cleaner:
+
+```csharp
+var parts   = request.SearchTerm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+var endPart = parts.LastOrDefault();
+```
+
+---
+
+## RedisValue Case
+
+Another place that broke:
+
+```csharp
+return JsonSerializer.Deserialize<RgsMapLineModel>(result);
+```
+
+In VS 2022, it compiled fine.  
+But in Insiders, `result` is a `RedisValue` (struct), not directly supported by `JsonSerializer`.
+
+✅ Fix:
+
+```csharp
+return JsonSerializer.Deserialize<RgsMapLineModel>(result.ToString());
+```
+
+---
+
+## Lessons Learned
+
+- **Implicit conversions to Span** are picked up eagerly in the new compiler.
+- Be explicit with `.AsEnumerable()` or use `Enumerable.Reverse()` if you want LINQ.
+- For structs like `RedisValue`, always convert before passing to APIs like `JsonSerializer`.
+
+---
+
+## Closing Thoughts
+
+While this feels like a breaking change, it’s actually the compiler **preferring high-performance APIs** (`Span<T>`). That’s good for performance, but it means our code needs to be explicit about intent.  
+
+If you’re experimenting with **VS Insiders**, watch out for these tweaks!

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Helmet } from 'react-helmet'
 import Layout from '../components/layout'
 
-// Client-side Career Copilot (no API routes needed)
+// Client-side Career Copilot with Anthropic API
 const CareerCopilotPage = () => {
   const [messages, setMessages] = useState([
     {
@@ -28,7 +28,18 @@ What would you like help with?`
   ])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
   const messagesEndRef = useRef(null)
+
+  // Check if Anthropic API key is available
+  useEffect(() => {
+    // In a real app, you'd check environment variables or user settings
+    // For demo, we'll assume it's configured if user has set it
+    const hasApiKey = process.env.GATSBY_ANTHROPIC_API_KEY || 
+                     localStorage.getItem('anthropic_api_key') ||
+                     window.ANTHROPIC_API_KEY
+    setApiKeyConfigured(!!hasApiKey)
+  }, [])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -37,6 +48,51 @@ What would you like help with?`
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Anthropic API client-side call
+  const callAnthropicAPI = async (prompt, maxTokens = 1000) => {
+    try {
+      // Get API key from environment or localStorage
+      const apiKey = process.env.GATSBY_ANTHROPIC_API_KEY || 
+                    localStorage.getItem('anthropic_api_key') ||
+                    window.ANTHROPIC_API_KEY
+
+      if (!apiKey) {
+        throw new Error('Anthropic API key not configured')
+      }
+
+      // Use a CORS proxy for client-side API calls
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: maxTokens,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ]
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`)
+      }
+
+      const data = await response.json()
+      return data.content[0].text
+
+    } catch (error) {
+      console.warn('Anthropic API call failed:', error.message)
+      throw error
+    }
+  }
 
   // Client-side job search function
   const searchJobs = async (keywords) => {
@@ -68,45 +124,143 @@ What would you like help with?`
             )
           })
           .slice(0, 5)
-          .map((job, index) => 
-            `${index + 1}. **${job.position}** at ${job.company}\n   📍 ${job.location || 'Remote'}\n   🔗 ${job.url || 'https://remoteok.io'}\n   📝 ${(job.description || 'No description').substring(0, 100)}...`
-          )
 
         if (filteredJobs.length > 0) {
-          return `## 🔍 Found ${filteredJobs.length} Jobs\n\n${filteredJobs.join('\n\n')}\n\n**Source:** RemoteOK\n\nWould you like me to help you with cover letters for any of these positions?`
+          const jobsList = filteredJobs.map((job, index) => 
+            `${index + 1}. **${job.position}** at ${job.company}\n   📍 ${job.location || 'Remote'}\n   🔗 ${job.url || 'https://remoteok.io'}\n   📝 ${(job.description || 'No description').substring(0, 100)}...`
+          ).join('\n\n')
+
+          return {
+            success: true,
+            response: `## 🔍 Found ${filteredJobs.length} Jobs\n\n${jobsList}\n\n**Source:** RemoteOK\n\nWould you like me to help you with cover letters for any of these positions?`,
+            jobs: filteredJobs
+          }
         }
       }
 
-      return `🔍 **Job Search Results**\n\nI searched for "${keywords}" but couldn't find matching jobs right now. This might be due to:\n\n- API rate limits\n- Network issues\n- Very specific search terms\n\nTry different keywords like "developer", "engineer", "designer", etc.`
+      return {
+        success: false,
+        response: `🔍 **Job Search Results**\n\nI searched for "${keywords}" but couldn't find matching jobs right now. This might be due to:\n\n- API rate limits\n- Network issues\n- Very specific search terms\n\nTry different keywords like "developer", "engineer", "designer", etc.`
+      }
       
     } catch (error) {
-      return `❌ **Job Search Error**\n\nCouldn't fetch jobs due to network issues. Here's what I would typically find:\n\n**Sample Results for "${keywords}":**\n\n1. **Senior Software Engineer** at TechCorp\n   📍 Remote\n   💰 $120k - $150k\n   📝 Full-stack development with React and Node.js...\n\n2. **Frontend Developer** at StartupXYZ  \n   📍 San Francisco, CA\n   💰 $100k - $130k\n   📝 Building modern web applications with React...\n\n3. **Backend Engineer** at DataCo\n   📍 Remote\n   💰 $110k - $140k\n   📝 Python/Django development for data platforms...\n\n*Note: These are sample results. Real job search requires API access.*`
+      return {
+        success: false,
+        response: `❌ **Job Search Error**\n\nCouldn't fetch jobs due to network issues. Here's what I would typically find:\n\n**Sample Results for "${keywords}":**\n\n1. **Senior Software Engineer** at TechCorp\n   📍 Remote\n   💰 $120k - $150k\n   📝 Full-stack development with React and Node.js...\n\n2. **Frontend Developer** at StartupXYZ  \n   📍 San Francisco, CA\n   💰 $100k - $130k\n   📝 Building modern web applications with React...\n\n3. **Backend Engineer** at DataCo\n   📍 Remote\n   💰 $110k - $140k\n   📝 Python/Django development for data platforms...\n\n*Note: These are sample results. Real job search requires API access.*`
+      }
     }
   }
 
-  // Client-side AI simulation
-  const generateAIResponse = async (message, type) => {
-    // Simulate AI processing time
-    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000))
+  // AI-powered cover letter generation
+  const generateCoverLetter = async (message) => {
+    if (!apiKeyConfigured) {
+      return `## ✍️ Cover Letter Template\n\n**Dear Hiring Manager,**\n\nI am writing to express my strong interest in the software engineering position at your company. With my background in full-stack development and passion for creating innovative solutions, I am excited about the opportunity to contribute to your team.\n\nIn my previous roles, I have successfully:\n• Developed scalable web applications using modern frameworks\n• Collaborated with cross-functional teams to deliver high-quality products\n• Implemented best practices for code quality and performance optimization\n\nI am particularly drawn to your company's mission and would welcome the opportunity to discuss how my skills and enthusiasm can contribute to your continued success.\n\nThank you for your consideration. I look forward to hearing from you.\n\n**Sincerely,**\n[Your Name]\n\n---\n**Word count:** ~150 words\n*This is a template - add your Anthropic API key for personalized letters.*`
+    }
 
-    const messageText = message.toLowerCase()
+    try {
+      const prompt = `Write a professional cover letter based on this request: "${message}"
 
-    switch (type) {
-      case 'cover_letter':
-        return `## ✍️ Cover Letter\n\n**Dear Hiring Manager,**\n\nI am writing to express my strong interest in the software engineering position at your company. With my background in full-stack development and passion for creating innovative solutions, I am excited about the opportunity to contribute to your team.\n\nIn my previous roles, I have successfully:\n• Developed scalable web applications using modern frameworks\n• Collaborated with cross-functional teams to deliver high-quality products\n• Implemented best practices for code quality and performance optimization\n\nI am particularly drawn to your company's mission and would welcome the opportunity to discuss how my skills and enthusiasm can contribute to your continued success.\n\nThank you for your consideration. I look forward to hearing from you.\n\n**Sincerely,**\n[Your Name]\n\n---\n**Word count:** ~150 words\n*This is a template - customize with specific details for best results.*`
+Requirements:
+- Keep it concise (250-400 words)
+- Professional tone
+- Highlight relevant experience
+- Show enthusiasm for the role and company
+- Include a strong opening and closing
+- Make it personalized and specific
 
-      case 'linkedin_post':
-        return `## 📱 LinkedIn Post\n\n🚀 Excited to share my latest project! Just completed building an AI-powered career assistant that helps job seekers with:\n\n✅ Intelligent job matching\n✅ Resume optimization\n✅ Cover letter generation\n✅ Professional networking content\n\nThe combination of modern web technologies and AI is opening up incredible possibilities for career development. It's amazing how technology can help people find their dream jobs more efficiently!\n\nWhat tools do you use to enhance your job search? Would love to hear your thoughts! 💭\n\n#CareerDevelopment #AI #JobSearch #TechInnovation #WebDevelopment\n\n---\n**Character count:** 487\n*Perfect length for LinkedIn engagement!*`
+If specific job details aren't provided, create a general but professional cover letter template.
 
-      case 'resume_score':
-        return `## 📊 Resume Analysis\n\n**Overall Compatibility Score: 85%**\n\n**Strengths:**\n✅ Strong technical skills match (90%)\n✅ Relevant experience highlighted (80%)\n✅ Good keyword optimization (85%)\n\n**Areas for Improvement:**\n🔸 Add more quantified achievements\n🔸 Include specific technologies mentioned in job description\n🔸 Highlight leadership/collaboration experience\n\n**Recommendations:**\n1. **Quantify your impact** - Add metrics like "Improved performance by 40%"\n2. **Tailor keywords** - Include specific technologies from job posting\n3. **Showcase soft skills** - Mention teamwork and communication abilities\n\n**Next Steps:**\nUpdate your resume with these suggestions and you'll likely increase your match score to 90%+!\n\n*This is a sample analysis. Upload your actual resume for personalized feedback.*`
+Write only the cover letter content, no additional formatting or explanations.`
 
-      default:
-        if (messageText.includes('job') || messageText.includes('find') || messageText.includes('search')) {
-          return await searchJobs(message)
-        }
-        
-        return `🤖 **AI Career Assistant**\n\nI understand you're asking about: "${message}"\n\nI can help you with:\n\n🔍 **Job Search** - "Find software engineer jobs"\n📊 **Resume Analysis** - "Score my resume"\n✍️ **Cover Letters** - "Write a cover letter for [job]"\n📱 **LinkedIn Posts** - "Create a post about [topic]"\n\n**Pro Tips:**\n• Be specific about job titles and locations\n• Mention the company name for cover letters\n• Describe your achievement for LinkedIn posts\n• Include your background for resume scoring\n\nWhat would you like to try first?`
+      const coverLetter = await callAnthropicAPI(prompt, 1500)
+      
+      return `## ✍️ AI-Generated Cover Letter\n\n${coverLetter}\n\n---\n**Word count:** ~${coverLetter.split(' ').length} words\n*Generated by Claude AI*`
+      
+    } catch (error) {
+      return `❌ **Cover Letter Error**\n\nCouldn't generate cover letter: ${error.message}\n\nPlease provide more details like:\n- Job title\n- Company name\n- Your background\n\nOr check your Anthropic API key configuration.`
+    }
+  }
+
+  // AI-powered LinkedIn post generation
+  const generateLinkedInPost = async (message) => {
+    if (!apiKeyConfigured) {
+      return `## 📱 LinkedIn Post Template\n\n🚀 Excited to share my latest project! Just completed building an AI-powered career assistant that helps job seekers with:\n\n✅ Intelligent job matching\n✅ Resume optimization\n✅ Cover letter generation\n✅ Professional networking content\n\nThe combination of modern web technologies and AI is opening up incredible possibilities for career development. It's amazing how technology can help people find their dream jobs more efficiently!\n\nWhat tools do you use to enhance your job search? Would love to hear your thoughts! 💭\n\n#CareerDevelopment #AI #JobSearch #TechInnovation #WebDevelopment\n\n---\n**Character count:** 487\n*This is a template - add your Anthropic API key for personalized posts.*`
+    }
+
+    try {
+      const prompt = `Create a professional LinkedIn post based on: "${message}"
+
+Requirements:
+- Make it engaging and professional
+- Include 3-5 relevant hashtags at the end
+- Structure it for maximum engagement (hook, value, call-to-action)
+- Keep it under 1300 characters for better engagement
+- Make it authentic and personal
+- Use emojis appropriately
+
+Write only the LinkedIn post content, no additional formatting or explanations.`
+
+      const post = await callAnthropicAPI(prompt, 800)
+      
+      return `## 📱 AI-Generated LinkedIn Post\n\n${post}\n\n---\n**Character count:** ${post.length}\n*Generated by Claude AI*`
+      
+    } catch (error) {
+      return `❌ **LinkedIn Post Error**\n\nCouldn't generate post: ${error.message}\n\nTry describing what you want to share, like:\n- A recent achievement\n- A project you completed\n- Career milestone\n\nOr check your Anthropic API key configuration.`
+    }
+  }
+
+  // AI-powered resume scoring
+  const scoreResume = async (message) => {
+    if (!apiKeyConfigured) {
+      return `## 📊 Resume Analysis Template\n\n**Overall Compatibility Score: 85%**\n\n**Strengths:**\n✅ Strong technical skills match (90%)\n✅ Relevant experience highlighted (80%)\n✅ Good keyword optimization (85%)\n\n**Areas for Improvement:**\n🔸 Add more quantified achievements\n🔸 Include specific technologies mentioned in job description\n🔸 Highlight leadership/collaboration experience\n\n**Recommendations:**\n1. **Quantify your impact** - Add metrics like "Improved performance by 40%"\n2. **Tailor keywords** - Include specific technologies from job posting\n3. **Showcase soft skills** - Mention teamwork and communication abilities\n\n**Next Steps:**\nUpdate your resume with these suggestions and you'll likely increase your match score to 90%+!\n\n*This is a sample analysis. Add your Anthropic API key for personalized feedback.*`
+    }
+
+    try {
+      const prompt = `Analyze this resume or career background and provide scoring: "${message}"
+
+Provide a comprehensive resume analysis including:
+- Overall compatibility score (0-100%)
+- Strengths and areas for improvement
+- Specific recommendations for enhancement
+- Skills match analysis
+- Keyword optimization suggestions
+
+Format the response with clear sections and actionable advice.
+
+If no specific resume content is provided, give general resume improvement advice.`
+
+      const analysis = await callAnthropicAPI(prompt, 1500)
+      
+      return `## 📊 AI-Powered Resume Analysis\n\n${analysis}\n\n---\n*Analysis by Claude AI*`
+      
+    } catch (error) {
+      return `❌ **Resume Analysis Error**\n\nCouldn't analyze resume: ${error.message}\n\nPlease provide:\n- Your resume content\n- Job descriptions to compare against\n- Specific skills you want to highlight\n\nOr check your Anthropic API key configuration.`
+    }
+  }
+
+  // General AI assistant
+  const generateGeneralResponse = async (message) => {
+    if (!apiKeyConfigured) {
+      return `🤖 **AI Career Assistant**\n\nI understand you're asking about: "${message}"\n\nI can help you with:\n\n🔍 **Job Search** - "Find software engineer jobs"\n📊 **Resume Analysis** - "Score my resume"\n✍️ **Cover Letters** - "Write a cover letter for [job]"\n📱 **LinkedIn Posts** - "Create a post about [topic]"\n\n**Pro Tips:**\n• Be specific about job titles and locations\n• Mention the company name for cover letters\n• Describe your achievement for LinkedIn posts\n• Include your background for resume scoring\n\n*Add your Anthropic API key for AI-powered responses!*\n\nWhat would you like to try first?`
+    }
+
+    try {
+      const prompt = `You are an AI career assistant. Respond helpfully to: "${message}"
+
+Keep responses concise and offer to help with:
+- Job searching
+- Resume scoring
+- Cover letter writing
+- LinkedIn post creation
+
+Be encouraging, professional, and provide actionable advice.`
+
+      const response = await callAnthropicAPI(prompt, 800)
+      
+      return `🤖 **AI Career Assistant**\n\n${response}\n\n---\n*Powered by Claude AI*`
+      
+    } catch (error) {
+      return `🤖 **AI Career Assistant**\n\nHi! I can help you with:\n\n🔍 **Job Search** - "Find software engineer jobs"\n📊 **Resume Analysis** - "Score my resume"\n✍️ **Cover Letters** - "Write a cover letter for [job]"\n📱 **LinkedIn Posts** - "Create a post about [topic]"\n\n*Note: Add your Anthropic API key for AI-powered responses.*\n\nWhat would you like help with?`
     }
   }
 
@@ -126,25 +280,33 @@ What would you like help with?`
 
     try {
       const messageText = userMessage.content.toLowerCase()
-      let responseType = 'general'
+      let response
+      let toolUsed = 'general'
       
-      if (messageText.includes('cover letter') || messageText.includes('letter')) {
-        responseType = 'cover_letter'
+      if (messageText.includes('job') || messageText.includes('find') || messageText.includes('search')) {
+        const jobResult = await searchJobs(userMessage.content)
+        response = jobResult.response
+        toolUsed = 'job_search'
+      } else if (messageText.includes('cover letter') || messageText.includes('letter')) {
+        response = await generateCoverLetter(userMessage.content)
+        toolUsed = 'cover_letter'
       } else if (messageText.includes('linkedin') || messageText.includes('post')) {
-        responseType = 'linkedin_post'
+        response = await generateLinkedInPost(userMessage.content)
+        toolUsed = 'linkedin_post'
       } else if (messageText.includes('score') || messageText.includes('resume') || messageText.includes('analyze')) {
-        responseType = 'resume_score'
-      } else if (messageText.includes('job') || messageText.includes('find') || messageText.includes('search')) {
-        responseType = 'job_search'
+        response = await scoreResume(userMessage.content)
+        toolUsed = 'resume_analysis'
+      } else {
+        response = await generateGeneralResponse(userMessage.content)
+        toolUsed = 'general_ai'
       }
-
-      const response = await generateAIResponse(userMessage.content, responseType)
 
       const assistantMessage = {
         id: Date.now() + 1,
         type: 'assistant',
         content: response,
-        toolUsed: responseType
+        toolUsed: toolUsed,
+        aiPowered: apiKeyConfigured
       }
 
       setMessages(prev => [...prev, assistantMessage])
@@ -155,7 +317,7 @@ What would you like help with?`
       const errorResponse = {
         id: Date.now() + 1,
         type: 'assistant',
-        content: `❌ **Oops!**\n\nSomething went wrong, but I'm still here to help!\n\nTry asking me about:\n• Finding jobs\n• Writing cover letters\n• Creating LinkedIn posts\n• Resume tips\n\nWhat would you like help with?`
+        content: `❌ **Oops!**\n\nSomething went wrong: ${error.message}\n\nTry asking me about:\n• Finding jobs\n• Writing cover letters\n• Creating LinkedIn posts\n• Resume tips\n\nWhat would you like help with?`
       }
       
       setMessages(prev => [...prev, errorResponse])
@@ -235,11 +397,24 @@ What would you like help with?`
     setInputValue(prompt)
   }
 
+  // API Key configuration component
+  const configureApiKey = () => {
+    const apiKey = prompt('Enter your Anthropic API key (starts with sk-ant-):')
+    if (apiKey && apiKey.startsWith('sk-ant-')) {
+      localStorage.setItem('anthropic_api_key', apiKey)
+      window.ANTHROPIC_API_KEY = apiKey
+      setApiKeyConfigured(true)
+      alert('API key configured! You now have access to AI-powered responses.')
+    } else if (apiKey) {
+      alert('Invalid API key format. Please enter a valid Anthropic API key.')
+    }
+  }
+
   return (
     <Layout>
       <Helmet>
         <title>AI Career Copilot Demo | Your Personal Career Assistant</title>
-        <meta name="description" content="Try our AI Career Copilot - get job recommendations, resume scoring, cover letter generation, and LinkedIn content creation." />
+        <meta name="description" content="Try our AI Career Copilot - get job recommendations, resume scoring, cover letter generation, and LinkedIn content creation powered by Claude AI." />
       </Helmet>
 
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
@@ -258,10 +433,18 @@ What would you like help with?`
           {/* Status Indicator */}
           <div className="mb-4 text-center">
             <div className="inline-flex items-center space-x-2 bg-white px-4 py-2 rounded-full shadow-sm">
-              <div className="w-2 h-2 rounded-full bg-green-400"></div>
+              <div className={`w-2 h-2 rounded-full ${apiKeyConfigured ? 'bg-green-400' : 'bg-yellow-400'}`}></div>
               <span className="text-sm text-gray-600">
-                AI Assistant Ready (Client-Side Demo)
+                {apiKeyConfigured ? 'AI Assistant Ready (Claude AI)' : 'Demo Mode (Templates Only)'}
               </span>
+              {!apiKeyConfigured && (
+                <button 
+                  onClick={configureApiKey}
+                  className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
+                >
+                  Add API Key
+                </button>
+              )}
             </div>
           </div>
 
@@ -275,7 +458,9 @@ What would you like help with?`
                 </div>
                 <div>
                   <h2 className="font-semibold">AI Career Assistant</h2>
-                  <p className="text-sm opacity-90">Client-Side Demo - No Server Required</p>
+                  <p className="text-sm opacity-90">
+                    {apiKeyConfigured ? 'Powered by Claude AI & Real Job APIs' : 'Demo Mode - Add API Key for AI Features'}
+                  </p>
                 </div>
                 <div className="ml-auto">
                   <div className="flex items-center space-x-2 text-sm">
@@ -306,6 +491,7 @@ What would you like help with?`
                     {message.toolUsed && (
                       <div className="mt-2 text-xs opacity-70 border-t pt-2">
                         🔧 Tool: {message.toolUsed}
+                        {message.aiPowered && <span className="ml-2">⚡ AI-Powered</span>}
                       </div>
                     )}
                   </div>
@@ -317,7 +503,9 @@ What would you like help with?`
                   <div className="bg-gray-100 text-gray-800 max-w-xs lg:max-w-md px-4 py-3 rounded-2xl">
                     <div className="flex items-center space-x-2">
                       <div className="spinner"></div>
-                      <span className="text-sm">AI is processing your request...</span>
+                      <span className="text-sm">
+                        {apiKeyConfigured ? 'Claude AI is processing...' : 'Generating response...'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -410,20 +598,42 @@ What would you like help with?`
             </div>
           </div>
 
-          {/* Demo Notice */}
-          <div className="mt-8 bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-start space-x-3">
-              <div className="text-green-600 text-xl">✅</div>
-              <div>
-                <h4 className="font-semibold text-green-800 mb-1">Client-Side Demo Active</h4>
-                <p className="text-sm text-green-700">
-                  This demo runs entirely in your browser - no server required! 
-                  It includes simulated AI responses and real job search capabilities. 
-                  Perfect for testing and demonstration purposes.
-                </p>
+          {/* API Key Notice */}
+          {!apiKeyConfigured && (
+            <div className="mt-8 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <div className="text-yellow-600 text-xl">🔑</div>
+                <div>
+                  <h4 className="font-semibold text-yellow-800 mb-1">Unlock AI Features</h4>
+                  <p className="text-sm text-yellow-700 mb-3">
+                    Add your Anthropic API key to enable Claude AI-powered responses for cover letters, LinkedIn posts, and resume analysis.
+                  </p>
+                  <button 
+                    onClick={configureApiKey}
+                    className="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700 text-sm"
+                  >
+                    Configure API Key
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
+
+          {/* Success Notice */}
+          {apiKeyConfigured && (
+            <div className="mt-8 bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <div className="text-green-600 text-xl">✅</div>
+                <div>
+                  <h4 className="font-semibold text-green-800 mb-1">AI Features Active</h4>
+                  <p className="text-sm text-green-700">
+                    Claude AI is now powering your career assistant! You have access to personalized cover letters, 
+                    LinkedIn posts, resume analysis, and intelligent career advice.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Layout>
