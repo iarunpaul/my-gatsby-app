@@ -22,7 +22,9 @@ After digging in, I realized it wasn’t a bug in my code — it was a change in
 Consider this code:
 
 ```csharp
-var endPart = request.SearchTerm.Split(" ").Reverse().FirstOrDefault();
+var endPart = request.SearchTerm.Split(" ")
+                                .Reverse()
+                                .FirstOrDefault();
 ```
 
 ### ✅ In Visual Studio 2022
@@ -43,10 +45,10 @@ Force the LINQ overload:
 
 ```csharp
 var endPart = request.SearchTerm
-    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-    .AsEnumerable()
-    .Reverse()
-    .FirstOrDefault();
+                        .Split(' ')
+                        .AsEnumerable()
+                        .Reverse()
+                        .FirstOrDefault();
 ```
 
 ---
@@ -56,7 +58,8 @@ var endPart = request.SearchTerm
 Since I just needed the **last token**, this is cleaner:
 
 ```csharp
-var parts   = request.SearchTerm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+var parts   = request.SearchTerm
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
 var endPart = parts.LastOrDefault();
 ```
 
@@ -67,7 +70,8 @@ var endPart = parts.LastOrDefault();
 Another place that broke:
 
 ```csharp
-return JsonSerializer.Deserialize<RgsMapLineModel>(result);
+return JsonSerializer
+        .Deserialize<RgsMapLineModel>(result);
 ```
 
 In VS 2022, it compiled fine.  
@@ -76,7 +80,9 @@ But in Insiders, `result` is a `RedisValue` (struct), not directly supported by 
 ✅ Fix:
 
 ```csharp
-return JsonSerializer.Deserialize<RgsMapLineModel>(result.ToString());
+return JsonSerializer
+        .Deserialize<RgsMapLineModel>(result
+                                .ToString());
 ```
 
 ---
@@ -96,5 +102,32 @@ While this feels like a breaking change, it’s actually the compiler **preferri
 If you’re experimenting with **VS Insiders**, watch out for these tweaks!
 
 > A good read : [Understanding C# overload-resolution](https://learn.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/10.0/csharp-overload-resolution)
+
+## Last Note
+### Why does the compiler prefer `Span<T>`?
+
+You might wonder why the new compiler prefers `Span<T>` overloads over `string[]` and LINQ.  
+The reason is performance: `Span<T>` lets you work with slices of arrays and strings **without extra allocations**.
+
+### Advantages of `Span<T>`
+- **No extra memory allocations** → avoids creating new arrays when slicing strings.  
+- **Safer than pointers** → provides bounds checking while working with memory directly.  
+- **Faster iteration** → direct access without LINQ’s deferred execution overhead.  
+
+### Example
+
+```csharp
+// Traditional LINQ
+var words = text.Split(' ');
+var last  = words.LastOrDefault();
+
+// With Span<T>
+ReadOnlySpan<char> span = text.AsSpan();
+int idx = span.LastIndexOf(' ');
+var lastWord = idx >= 0 ? span.Slice(idx + 1).ToString() : text;
+```
+The second approach avoids creating an intermediate string[] entirely.
+
+👉 I’ll explore the power of Span&lt;T&gt; in depth (and when not to use it) in a follow-up blog.
 
 Peace... 🍀
