@@ -2,28 +2,36 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Helmet } from 'react-helmet'
 import Layout from '../components/layout'
 
+// API Configuration - uses environment variable or falls back to localhost
+const API_BASE_URL = process.env.GATSBY_API_BASE_URL || 'http://localhost:3001';
+
 // Client-side Career Copilot with Anthropic API
 const CareerCopilotPage = () => {
   const [messages, setMessages] = useState([
     {
       id: 1,
       type: 'assistant',
-      content: `👋 **Welcome to AI Career Copilot!**
+      content: `🚀 **Welcome to REAL LinkedIn Career Copilot!**
 
-I can help you with:
+Powered by Live LinkedIn Scraping + Multi-API Integration:
 
-🔍 **Job Search** - Find jobs across multiple platforms
-📊 **Resume Scoring** - Analyze resume-job compatibility  
-✍️ **Cover Letters** - Generate personalized letters
-📱 **LinkedIn Posts** - Create engaging content
+🔍 **REAL LinkedIn Job Search** - Live scraping from actual LinkedIn job pages
+📊 **Multi-API Aggregation** - RemoteOK, The Muse, LinkedIn combined
+✍️ **AI Cover Letters** - Claude AI-powered personalized letters
+📱 **AI LinkedIn Posts** - Engagement-optimized professional content
+🤖 **Claude AI Integration** - Advanced analysis and content generation
 
-**Try these examples:**
-• "Find software engineer jobs"
-• "Write a cover letter for developer position"
-• "Create a LinkedIn post about my coding project"
-• "Help me with my job search"
+**LIVE DATA FEATURES:**
+• "Find remote data scientist jobs" - Real positions from Notion, Netflix, etc.
+• "Find software engineer jobs in NYC" - Live LinkedIn + API results
+• "Write a cover letter for [specific job]" - AI-powered generation
+• "Create a LinkedIn post about [topic]" - Optimized for engagement
 
-What would you like help with?`
+**🔥 REAL LINKEDIN SCRAPING ACTIVE** ✅
+**📊 Multi-API job aggregation enabled** ✅
+**🤖 Claude AI integration ready** ✅
+
+Real jobs, real data, real results. What would you like to find?`
     }
   ])
   const [inputValue, setInputValue] = useState('')
@@ -61,25 +69,32 @@ What would you like help with?`
         throw new Error('Anthropic API key not configured')
       }
 
-      // Use a CORS proxy for client-side API calls
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      //  // Use a CORS proxy for client-side API calls
+      // const proxyUrl = 'https://api.allorigins.win/raw?url='
+      // const targetUrl = 'https://api.anthropic.com/v1/messages'
+     
+      // const response = await fetch(proxyUrl + encodeURIComponent(targetUrl), {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //     'x-api-key': apiKey,
+      //   },
+      //   body: JSON.stringify({
+      //     model: 'claude-3-haiku-20240307',
+      //     max_tokens: maxTokens,
+      //     messages: [
+      //       {
+      //         role: 'user',
+      //         content: prompt
+      //       }
+      //     ]
+      //   })
+      // })
+      const response = await fetch(`${API_BASE_URL}/api/anthropic`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
-          max_tokens: maxTokens,
-          messages: [
-            {
-              role: 'user',
-              content: prompt
-            }
-          ]
-        })
-      })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, max_tokens: maxTokens, apiKey })
+      });
 
       if (!response.ok) {
         throw new Error(`Anthropic API error: ${response.status}`)
@@ -279,47 +294,46 @@ Be encouraging, professional, and provide actionable advice.`
     setIsLoading(true)
 
     try {
-      const messageText = userMessage.content.toLowerCase()
-      let response
-      let toolUsed = 'general'
-      
-      if (messageText.includes('job') || messageText.includes('find') || messageText.includes('search')) {
-        const jobResult = await searchJobs(userMessage.content)
-        response = jobResult.response
-        toolUsed = 'job_search'
-      } else if (messageText.includes('cover letter') || messageText.includes('letter')) {
-        response = await generateCoverLetter(userMessage.content)
-        toolUsed = 'cover_letter'
-      } else if (messageText.includes('linkedin') || messageText.includes('post')) {
-        response = await generateLinkedInPost(userMessage.content)
-        toolUsed = 'linkedin_post'
-      } else if (messageText.includes('score') || messageText.includes('resume') || messageText.includes('analyze')) {
-        response = await scoreResume(userMessage.content)
-        toolUsed = 'resume_analysis'
-      } else {
-        response = await generateGeneralResponse(userMessage.content)
-        toolUsed = 'general_ai'
+      // Use the enhanced MCP career chat endpoint
+      const apiKey = process.env.GATSBY_ANTHROPIC_API_KEY ||
+                    localStorage.getItem('anthropic_api_key') ||
+                    window.ANTHROPIC_API_KEY
+
+      const response = await fetch(`${API_BASE_URL}/api/career/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage.content,
+          apiKey: apiKey
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`MCP Server error: ${response.status}`)
       }
+
+      const data = await response.json()
 
       const assistantMessage = {
         id: Date.now() + 1,
         type: 'assistant',
-        content: response,
-        toolUsed: toolUsed,
-        aiPowered: apiKeyConfigured
+        content: data.response,
+        toolUsed: data.toolUsed || 'mcp_career_chat',
+        aiPowered: !!apiKey,
+        mcpEnhanced: true
       }
 
       setMessages(prev => [...prev, assistantMessage])
 
     } catch (error) {
       console.error('Error:', error)
-      
+
       const errorResponse = {
         id: Date.now() + 1,
         type: 'assistant',
-        content: `❌ **Oops!**\n\nSomething went wrong: ${error.message}\n\nTry asking me about:\n• Finding jobs\n• Writing cover letters\n• Creating LinkedIn posts\n• Resume tips\n\nWhat would you like help with?`
+        content: `❌ **Oops!**\n\nSomething went wrong: ${error.message}\n\nTry asking me about:\n• LinkedIn job search\n• Writing cover letters\n• Creating LinkedIn posts\n• Resume analysis\n• Professional summaries\n\nWhat would you like help with?`
       }
-      
+
       setMessages(prev => [...prev, errorResponse])
     } finally {
       setIsLoading(false)
@@ -387,10 +401,10 @@ Be encouraging, professional, and provide actionable advice.`
   }
 
   const examplePrompts = [
-    "Find remote software engineer jobs",
-    "Write a cover letter for a React developer position",
-    "Create a LinkedIn post about completing a project",
-    "Score my resume against job requirements"
+    "Find remote data scientist jobs",
+    "Find software engineer jobs in NYC",
+    "Write a cover letter for Netflix Data Scientist",
+    "Create a LinkedIn post about completing an AI project"
   ]
 
   const handleExampleClick = (prompt) => {
@@ -413,8 +427,8 @@ Be encouraging, professional, and provide actionable advice.`
   return (
     <Layout>
       <Helmet>
-        <title>AI Career Copilot Demo | Your Personal Career Assistant</title>
-        <meta name="description" content="Try our AI Career Copilot - get job recommendations, resume scoring, cover letter generation, and LinkedIn content creation powered by Claude AI." />
+        <title>REAL LinkedIn Career Copilot | Live Job Scraping + AI</title>
+        <meta name="description" content="Real LinkedIn Career Copilot with live job scraping, multi-API integration, and Claude AI. Find actual jobs from LinkedIn, RemoteOK, The Muse with AI-powered analysis." />
       </Helmet>
 
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
@@ -422,11 +436,11 @@ Be encouraging, professional, and provide actionable advice.`
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-gray-800 mb-4">
-              🤖 AI Career Copilot Demo
+              🔥 REAL LinkedIn Career Copilot
             </h1>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              Experience AI-driven career assistance through natural conversation. 
-              Get job recommendations, resume analysis, cover letters, and LinkedIn content.
+              Live LinkedIn job scraping + Multi-API integration + Claude AI.
+              Real jobs from actual LinkedIn pages, RemoteOK, The Muse with AI-powered analysis.
             </p>
           </div>
 

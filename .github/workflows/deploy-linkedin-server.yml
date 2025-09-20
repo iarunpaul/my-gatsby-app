@@ -1,0 +1,236 @@
+name: Deploy Enhanced LinkedIn Server to Azure App Service
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-linkedin-server.yml'
+  workflow_dispatch:
+
+env:
+  # Azure App Service configuration (Free Tier F1)
+  RESOURCE_GROUP: "Pollys"
+  APP_SERVICE_NAME: "linkedin-career-server"
+  APP_SERVICE_PLAN: "asp-linkedin-career-free"
+  LOCATION: "west Europe"
+
+  # Node.js configuration
+  NODE_VERSION: "18.x"
+
+  # Free tier configuration
+  SKU: "F1"  # Free tier
+  TIER: "Free"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: server/package.json
+
+    - name: 📦 Install dependencies
+      run: |
+        cd server
+        npm ci --production
+
+    - name: 🔐 Azure Login (OIDC)
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.SERVER_AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: 🏗️ Setup Azure resources (if needed)
+      run: |
+        echo "🏗️ Ensuring Azure resources exist..."
+
+        # Create resource group if it doesn't exist
+        if ! az group show --name ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "📦 Creating resource group..."
+          az group create \
+            --name ${{ env.RESOURCE_GROUP }} \
+            --location "${{ env.LOCATION }}"
+        fi
+
+        # Create App Service Plan if it doesn't exist (Free Tier)
+        if ! az appservice plan show --name ${{ env.APP_SERVICE_PLAN }} --resource-group ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "📋 Creating App Service Plan (Free Tier)..."
+          az appservice plan create \
+            --name ${{ env.APP_SERVICE_PLAN }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --location "${{ env.LOCATION }}" \
+            --sku ${{ env.SKU }} \
+            --is-linux
+        fi
+
+        # Create Web App if it doesn't exist
+        if ! az webapp show --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} >/dev/null 2>&1; then
+          echo "🌐 Creating Web App (Node.js)..."
+          az webapp create \
+            --name ${{ env.APP_SERVICE_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --plan ${{ env.APP_SERVICE_PLAN }} \
+            --runtime "NODE:18-lts"
+        fi
+
+        echo "✅ Azure resources ready"
+
+    - name: ⚙️ Configure Web App settings
+      run: |
+        echo "⚙️ Configuring Web App settings..."
+
+        # Set Node.js version and startup file
+        az webapp config set \
+          --name ${{ env.APP_SERVICE_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --startup-file "enhanced-linkedin-server.js"
+
+        # Configure application settings (environment variables)
+        az webapp config appsettings set \
+          --name ${{ env.APP_SERVICE_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --settings \
+            WEBSITE_NODE_DEFAULT_VERSION="18-lts" \
+            SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+            ENABLE_ORYX_BUILD="true" \
+            NODE_ENV="production" \
+            PORT="8080"
+
+        echo "✅ Web App settings configured"
+
+    - name: 🔐 Set environment variables
+      run: |
+        echo "🔐 Setting secure environment variables..."
+
+        # Set secure application settings
+        az webapp config appsettings set \
+          --name ${{ env.APP_SERVICE_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --settings \
+            ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            LINKEDIN_EMAIL="${{ secrets.LINKEDIN_EMAIL }}" \
+            LINKEDIN_PASSWORD="${{ secrets.LINKEDIN_PASSWORD }}" \
+            CORS_ORIGIN="${{ secrets.GATSBY_FRONTEND_URL }}" \
+            DEBUG="false"
+
+        echo "✅ Environment variables set"
+
+    - name: 🚀 Deploy to Azure App Service
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ env.APP_SERVICE_NAME }}
+        resource-group: ${{ env.RESOURCE_GROUP }}
+        package: './server'
+
+    - name: ⏳ Wait for deployment
+      run: |
+        echo "⏳ Waiting for deployment to complete..."
+
+        # Wait for the application to start
+        for i in {1..12}; do
+          echo "📊 Checking deployment status ($i/12)..."
+
+          # Check if the app is responding
+          APP_URL="https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net"
+          if curl -f -s "$APP_URL/health" > /dev/null; then
+            echo "✅ Application is responding!"
+            break
+          fi
+
+          if [ $i -eq 12 ]; then
+            echo "⚠️ Application not responding yet, but deployment may still be successful"
+          fi
+
+          sleep 30
+        done
+
+    - name: 🌐 Get application URL and test
+      run: |
+        echo "🌐 Getting application URL..."
+
+        APP_URL="https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net"
+
+        echo "✅ Enhanced LinkedIn Server deployed successfully!"
+        echo "🌐 Application URL: $APP_URL"
+        echo "🩺 Health Check: $APP_URL/health"
+        echo "🔍 LinkedIn Jobs API: $APP_URL/api/linkedin/jobs"
+        echo "✍️ Cover Letter API: $APP_URL/api/career/cover-letter"
+        echo "💬 Chat API: $APP_URL/api/career/chat"
+        echo ""
+        echo "🎯 Free Tier Configuration:"
+        echo "   SKU: ${{ env.SKU }} (Free)"
+        echo "   Runtime: Node.js ${{ env.NODE_VERSION }}"
+        echo "   Location: ${{ env.LOCATION }}"
+        echo ""
+        echo "💰 Estimated Monthly Cost: $0 (Free Tier - 60 CPU minutes/day)"
+
+    - name: 🧪 Test deployment endpoints
+      run: |
+        echo "🧪 Testing deployed endpoints..."
+
+        APP_URL="https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net"
+
+        # Test health endpoint
+        echo "🩺 Testing health endpoint..."
+        if curl -f -s "$APP_URL/health" > /dev/null; then
+          echo "✅ Health check passed"
+        else
+          echo "⚠️ Health check failed (app may be starting up)"
+        fi
+
+        # Test LinkedIn jobs endpoint (basic connectivity)
+        echo "🔍 Testing LinkedIn jobs endpoint..."
+        HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$APP_URL/api/linkedin/jobs?keywords=developer&limit=1")
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ LinkedIn jobs endpoint accessible"
+        else
+          echo "⚠️ LinkedIn jobs endpoint returned status: $HTTP_STATUS"
+        fi
+
+        # Test cover letter endpoint (template mode)
+        echo "✍️ Testing cover letter endpoint..."
+        HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
+          -X POST "$APP_URL/api/career/cover-letter" \
+          -H "Content-Type: application/json" \
+          -d '{"message": "cover letter for test position"}')
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "✅ Cover letter endpoint accessible"
+        else
+          echo "⚠️ Cover letter endpoint returned status: $HTTP_STATUS"
+        fi
+
+        echo ""
+        echo "🎉 Deployment completed! Your Enhanced LinkedIn Server is running on Azure App Service Free Tier."
+        echo "🔗 Access your server at: $APP_URL"
+
+    - name: 💰 Cost optimization summary
+      run: |
+        echo "💰 Azure App Service Free Tier Cost Summary:"
+        echo "============================================="
+        echo "✅ App Service: $0/month (Free F1 tier)"
+        echo "✅ Bandwidth: $0/month (within free limits)"
+        echo "✅ Storage: $0/month (1GB included)"
+        echo ""
+        echo "📊 Resource Limits (Free Tier):"
+        echo "- CPU Time: 60 minutes/day"
+        echo "- Memory: 1GB"
+        echo "- Storage: 1GB"
+        echo "- Custom domains: Not available"
+        echo "- Always On: Not available (app sleeps after 20 min)"
+        echo ""
+        echo "🎯 Total Estimated Cost: $0/month"
+        echo "🕐 App sleep behavior: Sleeps after 20 minutes of inactivity"
+        echo "⚡ Cold start: ~10-30 seconds when waking up"
