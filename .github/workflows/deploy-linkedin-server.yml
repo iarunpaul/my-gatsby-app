@@ -83,7 +83,7 @@ jobs:
             --name ${{ env.APP_SERVICE_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --plan ${{ env.APP_SERVICE_PLAN }} \
-            --runtime "NODE:18-lts"
+            --runtime "NODE|18.x"
         fi
 
         echo "✅ Azure resources ready"

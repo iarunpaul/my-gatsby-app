@@ -58,7 +58,7 @@ az ad app federated-credential create `
   --parameters '{
     "name": "github-actions-main",
     "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:YOUR_GITHUB_USERNAME/my-gatsby-site:ref:refs/heads/main",
+    "subject": "repo:iarunpaul/my-gatsby-app:ref:refs/heads/main",
     "description": "GitHub Actions main branch",
     "audiences": ["api://AzureADTokenExchange"]
   }'
