@@ -83,7 +83,7 @@ jobs:
             --name ${{ env.APP_SERVICE_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --plan ${{ env.APP_SERVICE_PLAN }} \
-            --runtime "NODE|18.x"
+            --runtime "NODE:18-lts"
         fi
 
         echo "✅ Azure resources ready"
@@ -92,7 +92,7 @@ jobs:
       run: |
         echo "⚙️ Configuring Web App settings..."
 
-        # Set Node.js version and startup file
+        # Set startup file
         az webapp config set \
           --name ${{ env.APP_SERVICE_NAME }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
