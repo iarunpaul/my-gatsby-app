@@ -19,7 +19,16 @@
       "Bash(robocopy:*)",
       "Bash(cp:*)",
       "Bash(rm:*)",
-      "Bash(npm run develop:*)"
+      "Bash(npm run develop:*)",
+      "Bash(npm --version)",
+      "Bash(npm run clean:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c:*)",
+      "Bash(npm cache clean:*)",
+      "Bash(set NODE_OPTIONS=--max-old-space-size=4096)",
+      "Bash(npm run dev-fast:*)"
     ],
     "deny": [],
     "ask": []
