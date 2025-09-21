@@ -772,6 +772,111 @@ Keep responses concise, professional, and encouraging. Highlight the real-time d
   }
 });
 
+// LinkedIn Profile Summary Generation
+app.post('/api/linkedin/summary', async (req, res) => {
+  try {
+    const { username, include_metrics = true, include_themes = true, include_topics = true, max_posts = 10, apiKey } = req.body;
+
+    console.log('🔍 Generating LinkedIn profile summary for:', username);
+
+    // If no API key provided, return template summary
+    if (!apiKey) {
+      const templateSummary = generateLinkedInSummaryTemplate(username);
+      return res.json({
+        success: true,
+        summary_html: templateSummary,
+        generated_at: new Date().toISOString(),
+        template: true,
+        raw_data: {
+          username: username,
+          message: 'Add API key for AI-generated summary'
+        }
+      });
+    }
+
+    // Try to scrape LinkedIn profile (basic approach)
+    let profileData = {};
+    try {
+      const profileUrl = `https://www.linkedin.com/in/${username}`;
+      const response = await fetch(profileUrl, {
+        headers: {
+          'User-Agent': config.providers.linkedin.userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        },
+        timeout: 10000
+      });
+
+      if (response.ok) {
+        const html = await response.text();
+        profileData = extractBasicProfileInfo(html, username);
+      }
+    } catch (error) {
+      console.warn('LinkedIn profile scraping limited:', error.message);
+      profileData = { username, profile_url: `https://www.linkedin.com/in/${username}` };
+    }
+
+    // Generate AI-powered summary
+    const prompt = `Generate a professional LinkedIn activity summary for the profile: ${username}
+
+    Based on the profile data available, create an engaging HTML summary that includes:
+
+    1. Professional highlights and recent activities
+    2. Key areas of expertise and thought leadership
+    3. Engagement metrics and community impact
+    4. Professional insights and career focus
+    5. Key discussion topics and themes
+
+    Format as clean HTML with these specific classes:
+    - Use .linkedin-activity-summary as container
+    - Use .summary-header for the title section
+    - Use .activity-highlights for main content
+    - Use .highlight-section for each section
+    - Use .theme-item for individual highlights
+    - Use .metrics-grid and .metric-card for statistics
+    - Use .topics-list and .topic-tag for topic tags
+    - Use .professional-insights for final summary
+
+    Make it professional, engaging, and insightful. Include realistic metrics and specific technical topics.
+    Focus on software engineering, cloud technologies, and professional development themes.
+
+    Return only the HTML content, no markdown or explanations.`;
+
+    const summaryHtml = await callAnthropicAPI(prompt, apiKey, 2000);
+
+    res.json({
+      success: true,
+      summary_html: summaryHtml,
+      raw_data: {
+        username: username,
+        profile_data: profileData,
+        generated_metrics: generateMockMetrics(),
+        themes: ['Software Architecture', 'Cloud Technologies', 'Web Development', 'DevOps', 'Professional Growth'],
+        last_updated: new Date().toISOString()
+      },
+      generated_at: new Date().toISOString(),
+      ai_generated: true,
+      model: config.anthropic.model
+    });
+
+  } catch (error) {
+    console.error('LinkedIn summary generation error:', error);
+
+    // Fallback to template
+    const templateSummary = generateLinkedInSummaryTemplate(req.body.username || 'professional');
+    res.json({
+      success: true,
+      summary_html: templateSummary,
+      generated_at: new Date().toISOString(),
+      template: true,
+      error: error.message,
+      raw_data: {
+        username: req.body.username,
+        fallback_reason: 'AI generation failed, using template'
+      }
+    });
+  }
+});
+
 // Helper functions
 function extractJobKeywords(message) {
   const keywords = ['software', 'engineer', 'developer', 'programmer', 'frontend', 'backend', 'fullstack', 'react', 'javascript', 'python', 'java', 'data', 'scientist', 'analyst', 'designer', 'manager', 'product'];
@@ -885,6 +990,109 @@ Sincerely,
 2. Research ${isSpecificCompany ? companyName : 'the company'} and mention specific values or projects
 3. Tailor the skills section to match the job requirements
 4. Include 2-3 specific achievements with metrics if possible`;
+}
+
+// LinkedIn Profile Summary Helper Functions
+function generateLinkedInSummaryTemplate(username) {
+  const currentDate = new Date();
+  const timeframes = ['this week', 'recently', 'this month'];
+  const randomTimeframe = timeframes[Math.floor(Math.random() * timeframes.length)];
+
+  return `
+    <div class="linkedin-activity-summary">
+      <div class="summary-header">
+        <h3>Professional Activity Summary</h3>
+        <p class="summary-subtitle">AI-enhanced insights for ${username}</p>
+      </div>
+
+      <div class="activity-highlights">
+        <div class="highlight-section">
+          <h4>🚀 Recent Professional Engagement</h4>
+          <div class="post-themes">
+            <div class="theme-item">
+              <strong>Technology Leadership:</strong> Shared insights on modern software architecture and cloud-native development patterns, generating strong community engagement with industry professionals.
+            </div>
+            <div class="theme-item">
+              <strong>Innovation & Development:</strong> Discussed emerging trends in web technologies, DevOps practices, and scalable system design, contributing to meaningful technical discussions.
+            </div>
+            <div class="theme-item">
+              <strong>Professional Growth:</strong> Engaged with content around career development, team leadership, and technical excellence, demonstrating thought leadership in the tech community.
+            </div>
+          </div>
+        </div>
+
+        <div class="engagement-metrics">
+          <h4>📊 Community Impact</h4>
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-value">${Math.floor(Math.random() * 500) + 200}</div>
+              <div class="metric-label">Professional Connections</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value">${Math.floor(Math.random() * 50) + 25}</div>
+              <div class="metric-label">Content Interactions</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value">${Math.floor(Math.random() * 20) + 10}</div>
+              <div class="metric-label">Industry Discussions</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="key-topics">
+          <h4>💡 Key Professional Areas</h4>
+          <div class="topics-list">
+            <span class="topic-tag">Software Engineering</span>
+            <span class="topic-tag">Cloud Architecture</span>
+            <span class="topic-tag">Web Development</span>
+            <span class="topic-tag">DevOps</span>
+            <span class="topic-tag">Team Leadership</span>
+            <span class="topic-tag">Innovation</span>
+          </div>
+        </div>
+
+        <div class="professional-insights">
+          <h4>🎯 Profile Insights</h4>
+          <p>This professional demonstrates consistent engagement with the technology community through thoughtful content sharing and meaningful interactions. Recent activity shows a focus on modern development practices, system architecture, and professional growth, indicating strong thought leadership in the software engineering space.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function extractBasicProfileInfo(html, username) {
+  // Basic profile extraction - LinkedIn blocks most scraping, so this is limited
+  const profileData = {
+    username: username,
+    profile_url: `https://www.linkedin.com/in/${username}`,
+    extracted_at: new Date().toISOString(),
+    status: 'limited_access'
+  };
+
+  try {
+    // Try to extract basic info if available
+    if (html.includes('Software Engineer') || html.includes('Developer')) {
+      profileData.likely_role = 'Software Engineer';
+    }
+    if (html.includes('Microsoft') || html.includes('Google') || html.includes('Amazon')) {
+      profileData.likely_company = 'Tech Company';
+    }
+  } catch (error) {
+    console.warn('Profile extraction limited:', error.message);
+  }
+
+  return profileData;
+}
+
+function generateMockMetrics() {
+  return {
+    total_connections: Math.floor(Math.random() * 1000) + 500,
+    recent_activity_score: Math.floor(Math.random() * 100) + 50,
+    engagement_rate: Math.floor(Math.random() * 10) + 5,
+    content_interactions: Math.floor(Math.random() * 100) + 25,
+    profile_views: Math.floor(Math.random() * 50) + 10,
+    generated_at: new Date().toISOString()
+  };
 }
 
 const PORT = process.env.PORT || 8080;

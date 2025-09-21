@@ -14,15 +14,18 @@ const LinkedInMCPSummary = ({
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // MCP Server configuration
-  const MCP_SERVER_URL = process.env.GATSBY_MCP_SERVER_URL || 'http://localhost:8001';
+  // Enhanced LinkedIn Server configuration - uses Azure server in production
+  const GATSBY_API_BASE_URL = process.env.GATSBY_API_BASE_URL ||
+    (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'http://localhost:3001'
+      : 'https://linkedin-career-server.azurewebsites.net');
 
   const fetchLinkedInSummary = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`${MCP_SERVER_URL}/api/linkedin/summary`, {
+      const response = await fetch(`${GATSBY_API_BASE_URL}/api/linkedin/summary`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -32,7 +35,8 @@ const LinkedInMCPSummary = ({
           include_metrics: true,
           include_themes: true,
           include_topics: true,
-          max_posts: 10
+          max_posts: 10,
+          apiKey: process.env.GATSBY_ANTHROPIC_API_KEY || (typeof window !== 'undefined' ? localStorage.getItem('anthropic_api_key') : null)
         })
       });
 
