@@ -3,6 +3,8 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 
+// Azure App Service deployment - trigger deployment workflow
+
 const app = express();
 
 // Enable CORS for all routes
