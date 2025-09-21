@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
+const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 
 const app = express();
@@ -86,7 +86,7 @@ async function fetchLinkedInJobs(keywords, location, limit = 10) {
 
     const url = `${config.providers.linkedin.baseUrl}?${params}`;
 
-    const response = await axios.get(url, {
+    const response = await fetch(url, {
       headers: {
         'User-Agent': config.providers.linkedin.userAgent,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -96,11 +96,15 @@ async function fetchLinkedInJobs(keywords, location, limit = 10) {
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
       },
-      timeout: 15000,
-      maxRedirects: 3
+      timeout: 15000
     });
 
-    const $ = cheerio.load(response.data);
+    if (!response.ok) {
+      throw new Error(`LinkedIn request failed: ${response.status}`);
+    }
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
     const jobs = [];
 
     // LinkedIn job card selectors (these may need updates as LinkedIn changes their structure)
@@ -227,15 +231,20 @@ async function fetchRemoteOkJobs(keywords, limit = 10) {
   try {
     console.log(`🌐 Fetching RemoteOK jobs for: ${keywords}`);
 
-    const response = await axios.get(`${config.providers.remoteOk.baseUrl}`, {
+    const response = await fetch(`${config.providers.remoteOk.baseUrl}`, {
       timeout: 10000,
       headers: {
         'User-Agent': 'Enhanced-AI-Career-Copilot/2.0'
       }
     });
 
-    if (response.data && Array.isArray(response.data)) {
-      const jobs = response.data
+    if (!response.ok) {
+      throw new Error(`RemoteOK request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data && Array.isArray(data)) {
+      const jobs = data
         .filter(job => job && job.position && job.company)
         .filter(job => {
           const searchText = `${job.position} ${job.description || ''}`.toLowerCase();
@@ -281,15 +290,20 @@ async function fetchTheMuseJobs(keywords, location, limit = 10) {
       params.append('location', location);
     }
 
-    const response = await axios.get(`${config.providers.theMuseJobs.baseUrl}?${params}`, {
+    const response = await fetch(`${config.providers.theMuseJobs.baseUrl}?${params}`, {
       timeout: 10000,
       headers: {
         'User-Agent': 'Enhanced-AI-Career-Copilot/2.0'
       }
     });
 
-    if (response.data && response.data.results) {
-      const jobs = response.data.results
+    if (!response.ok) {
+      throw new Error(`The Muse request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data && data.results) {
+      const jobs = data.results
         .filter(job => {
           const searchText = `${job.name} ${job.contents || ''}`.toLowerCase();
           return keywords.toLowerCase().split(' ').some(keyword =>
@@ -633,12 +647,15 @@ app.post('/api/career/chat', async (req, res) => {
       const jobSearchUrl = `${baseUrl}/api/linkedin/jobs?keywords=${encodeURIComponent(keywords)}&location=${encodeURIComponent(location)}&limit=10&remote=${remote}`;
 
       try {
-        const response = await axios.get(jobSearchUrl);
-        return res.json({
-          response: response.data.response,
-          toolUsed: 'enhanced_linkedin_job_search',
-          metadata: response.data.metadata
-        });
+        const response = await fetch(jobSearchUrl);
+        if (response.ok) {
+          const data = await response.json();
+          return res.json({
+            response: data.response,
+            toolUsed: 'enhanced_linkedin_job_search',
+            metadata: data.metadata
+          });
+        }
       } catch (error) {
         console.error('Job search proxy error:', error);
       }
