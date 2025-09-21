@@ -2,8 +2,11 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Helmet } from 'react-helmet'
 import Layout from '../components/layout'
 
-// API Configuration - uses environment variable or falls back to localhost
-const API_BASE_URL = process.env.GATSBY_API_BASE_URL || 'http://localhost:3001';
+// API Configuration - automatically detects production vs development
+const API_BASE_URL = process.env.GATSBY_API_BASE_URL ||
+  (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:3001'
+    : 'https://linkedin-career-server.azurewebsites.net');
 
 // Client-side Career Copilot with Anthropic API
 const CareerCopilotPage = () => {
