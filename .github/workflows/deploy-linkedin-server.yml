@@ -43,10 +43,12 @@ jobs:
         cache: 'npm'
         cache-dependency-path: server/package.json
 
-    - name: 📦 Install dependencies
+    - name: 📦 Install dependencies (clean build)
       run: |
         cd server
-        npm ci --production
+        rm -rf node_modules package-lock.json
+        npm install --production --no-cache
+        npm ls --depth=0
 
     - name: 🔐 Azure Login (OIDC)
       uses: azure/login@v1
@@ -130,6 +132,23 @@ jobs:
             DEBUG="false"
 
         echo "✅ Environment variables set"
+
+    - name: 🧹 Clear Azure build cache
+      run: |
+        echo "🧹 Clearing Azure build cache to force clean dependency installation..."
+
+        # Clear Oryx build cache
+        az webapp config appsettings set \
+          --name ${{ env.APP_SERVICE_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --settings \
+            ORYX_DISABLE_CACHE="true" \
+            WEBSITE_NODE_DEFAULT_VERSION="18-lts" \
+            SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+            ENABLE_ORYX_BUILD="true" \
+            BUILD_FLAGS="--clean"
+
+        echo "✅ Build cache settings updated"
 
     - name: 🔄 Restart Web App
       run: |
