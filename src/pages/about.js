@@ -2,6 +2,8 @@ import React from "react";
 import useRotateText from "../hooks/useRotateText";
 import Layout from "../components/layout";
 import Seo from "../components/seo";
+import Certifications from "../components/Certifications";
+import GitHubActivity from "../components/GitHubActivity";
 
 const AboutPage = () => {
   const rotatingText = useRotateText(["passion.", "fun.", "a journey.", "LIFE."], 200);
@@ -44,6 +46,16 @@ const AboutPage = () => {
                 <li>Java: ☕</li>
                 <li>C#: 🔷</li>
             </ul>
+
+        <hr className="my-8" />
+
+        {/* Professional Certifications Section */}
+        <Certifications />
+
+        <hr className="my-8" />
+
+        {/* GitHub Activity Section */}
+        <GitHubActivity username={process.env.GATSBY_GITHUB_USERNAME || "iarunpaul"} />
       </div>
     </Layout>
   );
