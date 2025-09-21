@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "WebFetch(domain:www.credly.com)",
+      "WebFetch(domain:credly.com)",
+      "Bash(git push:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build:*)",
+      "WebFetch(domain:examtopicsweb-dwgjfcfgdecucahz.northeurope-01.azurewebsites.net)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

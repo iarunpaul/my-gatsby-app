@@ -101,6 +101,13 @@ const Layout = ({ pageTitle, children }) => {
                 </svg>
                 CareerCopilot
               </NavLink>
+
+              <NavLink to="/az-204-exam" isScrolled={isScrolled} isActive={pageTitle === "AZ-204 Exam Questions"}>
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                AZ-204 Exam
+              </NavLink>
               
               <ExternalNavLink href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" isScrolled={isScrolled}>
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -179,6 +186,13 @@ const Layout = ({ pageTitle, children }) => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
                 CareerCopilot
+              </MobileNavLink>
+
+              <MobileNavLink to="/az-204-exam" onClick={() => setIsMenuOpen(false)} isActive={pageTitle === "AZ-204 Exam Questions"}>
+                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                AZ-204 Exam
               </MobileNavLink>
               <MobileExternalLink href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" onClick={() => setIsMenuOpen(false)}>
                 <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

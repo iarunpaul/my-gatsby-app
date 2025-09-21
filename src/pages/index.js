@@ -196,6 +196,20 @@ const IndexPage = () => {
                       <div className="text-sm text-gray-600">Automated professional activity tracking</div>
                     </div>
                   </div>
+
+                  <div className="flex items-start space-x-3">
+                    <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <svg className="w-4 h-4 text-orange-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <Link to="/az-204-exam" className="font-medium text-gray-900 hover:text-blue-600 transition-colors">
+                        AZ-204 Exam Practice
+                      </Link>
+                      <div className="text-sm text-gray-600">Azure Developer certification questions</div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
