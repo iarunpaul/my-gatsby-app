@@ -18,9 +18,11 @@ env:
   # Node.js configuration
   NODE_VERSION: "18.x"
 
-  # Free tier configuration
-  SKU: "F1"  # Free tier
-  TIER: "Free"
+  # Tier configuration - B1 for reliable uptime, F1 for free (with quota limits)
+  SKU: "B1"  # Basic tier - ~$13/month but no daily quota
+  TIER: "Basic"
+  # SKU: "F1"  # Free tier - $0/month but 60 CPU minutes/day limit
+  # TIER: "Free"
 
 permissions:
   id-token: write
@@ -92,11 +94,11 @@ jobs:
       run: |
         echo "⚙️ Configuring Web App settings..."
 
-        # Set startup file
+        # Set startup command
         az webapp config set \
           --name ${{ env.APP_SERVICE_NAME }} \
           --resource-group ${{ env.RESOURCE_GROUP }} \
-          --startup-file "enhanced-linkedin-server.js"
+          --startup-file "node enhanced-linkedin-server.js"
 
         # Configure application settings (environment variables)
         az webapp config appsettings set \
@@ -107,7 +109,8 @@ jobs:
             SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
             ENABLE_ORYX_BUILD="true" \
             NODE_ENV="production" \
-            PORT="8080"
+            PORT="8080" \
+            WEBSITES_PORT="8080"
 
         echo "✅ Web App settings configured"
 
@@ -128,6 +131,12 @@ jobs:
 
         echo "✅ Environment variables set"
 
+    - name: 🔄 Restart Web App
+      run: |
+        echo "🔄 Restarting Web App after configuration..."
+        az webapp restart --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }}
+        echo "✅ Web App restarted"
+
     - name: 🚀 Deploy to Azure App Service
       uses: azure/webapps-deploy@v2
       with:
@@ -135,13 +144,28 @@ jobs:
         resource-group: ${{ env.RESOURCE_GROUP }}
         package: './server'
 
-    - name: ⏳ Wait for deployment
+    - name: ⏳ Wait for deployment and check status
       run: |
         echo "⏳ Waiting for deployment to complete..."
+
+        # Check app status
+        APP_STATUS=$(az webapp show --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query state -o tsv)
+        echo "📊 Current app state: $APP_STATUS"
+
+        # If stopped, start the app
+        if [ "$APP_STATUS" = "Stopped" ]; then
+          echo "🔄 App is stopped, starting it..."
+          az webapp start --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }}
+          sleep 30
+        fi
 
         # Wait for the application to start
         for i in {1..12}; do
           echo "📊 Checking deployment status ($i/12)..."
+
+          # Check current status
+          CURRENT_STATUS=$(az webapp show --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query state -o tsv)
+          echo "Current state: $CURRENT_STATUS"
 
           # Check if the app is responding
           APP_URL="https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net"
@@ -151,7 +175,8 @@ jobs:
           fi
 
           if [ $i -eq 12 ]; then
-            echo "⚠️ Application not responding yet, but deployment may still be successful"
+            echo "⚠️ Getting application logs for debugging..."
+            az webapp log tail --name ${{ env.APP_SERVICE_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --timeout 30 || echo "Could not retrieve logs"
           fi
 
           sleep 30

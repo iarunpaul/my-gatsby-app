@@ -870,7 +870,7 @@ Sincerely,
 4. Include 2-3 specific achievements with metrics if possible`;
 }
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
   console.log(`🚀 Enhanced LinkedIn Career Server running on http://localhost:${PORT}`);
