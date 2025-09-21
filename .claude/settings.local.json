@@ -8,7 +8,8 @@
       "Bash(git push:*)",
       "Bash(curl:*)",
       "Bash(npm run build:*)",
-      "WebFetch(domain:examtopicsweb-dwgjfcfgdecucahz.northeurope-01.azurewebsites.net)"
+      "WebFetch(domain:examtopicsweb-dwgjfcfgdecucahz.northeurope-01.azurewebsites.net)",
+      "Bash(node:*)"
     ],
     "deny": [],
     "ask": []
