@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Helmet } from 'react-helmet'
 import Layout from '../components/layout'
-import ExamQuestionImage from '../components/ExamQuestionImage'
 
 // AZ-204 Exam Questions Page
 const AZ204ExamPage = () => {
@@ -14,7 +13,7 @@ const AZ204ExamPage = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [filteredQuestions, setFilteredQuestions] = useState([])
 
-  const questionsPerPage = 5
+  const questionsPerPage = 10
   const API_URL = 'https://examtopicsweb-dwgjfcfgdecucahz.northeurope-01.azurewebsites.net/api/Questions'
 
   // Fetch questions from API
@@ -96,29 +95,40 @@ const AZ204ExamPage = () => {
     setCurrentPage(1) // Reset to first page when searching
   }, [searchQuery, questions])
 
-  // Calculate pagination
-  const totalPages = Math.ceil(filteredQuestions.length / questionsPerPage)
-  const startIndex = (currentPage - 1) * questionsPerPage
-  const endIndex = startIndex + questionsPerPage
-  const currentQuestions = filteredQuestions.slice(startIndex, endIndex)
+  // Calculate pagination with memoization for performance
+  const paginationData = useMemo(() => {
+    const totalPages = Math.ceil(filteredQuestions.length / questionsPerPage)
+    const startIndex = (currentPage - 1) * questionsPerPage
+    const endIndex = startIndex + questionsPerPage
+    const currentQuestions = filteredQuestions.slice(startIndex, endIndex)
 
-  // Handle answer selection
-  const handleAnswerSelect = (questionIndex, optionIndex) => {
+    return {
+      totalPages,
+      startIndex,
+      endIndex,
+      currentQuestions
+    }
+  }, [filteredQuestions, currentPage, questionsPerPage])
+
+  const { totalPages, startIndex, endIndex, currentQuestions } = paginationData
+
+  // Handle answer selection with useCallback for performance
+  const handleAnswerSelect = useCallback((questionIndex, optionIndex) => {
     const globalQuestionIndex = startIndex + questionIndex
-    setSelectedAnswers({
-      ...selectedAnswers,
+    setSelectedAnswers(prev => ({
+      ...prev,
       [globalQuestionIndex]: optionIndex
-    })
-  }
+    }))
+  }, [startIndex])
 
-  // Toggle answer visibility
-  const toggleAnswers = (questionIndex) => {
+  // Toggle answer visibility with useCallback for performance
+  const toggleAnswers = useCallback((questionIndex) => {
     const globalQuestionIndex = startIndex + questionIndex
-    setShowAnswers({
-      ...showAnswers,
-      [globalQuestionIndex]: !showAnswers[globalQuestionIndex]
-    })
-  }
+    setShowAnswers(prev => ({
+      ...prev,
+      [globalQuestionIndex]: !prev[globalQuestionIndex]
+    }))
+  }, [startIndex])
 
   // Check if answer is correct
   const isAnswerCorrect = (questionIndex, selectedOption) => {
@@ -292,21 +302,29 @@ const AZ204ExamPage = () => {
                       <div className="mb-6">
                         <div className="grid gap-4">
                           {question.images.map((imageUrl, imgIndex) => (
-                            <ExamQuestionImage
-                              key={imgIndex}
-                              questionNumber={globalQuestionIndex + 1}
-                              imageIndex={imgIndex + 1}
-                              originalUrl={imageUrl}
-                              alt={`Question ${globalQuestionIndex + 1} - Image ${imgIndex + 1}`}
-                              className="w-full"
-                            />
+                            <div key={imgIndex} className="relative">
+                              <img
+                                src={imageUrl}
+                                alt={`Question ${globalQuestionIndex + 1} - Image ${imgIndex + 1}`}
+                                className="max-w-full h-auto rounded-lg border border-gray-200 shadow-sm"
+                                loading="lazy"
+                                decoding="async"
+                                onError={(e) => {
+                                  e.target.style.display = 'none'
+                                  console.warn(`Failed to load image: ${imageUrl}`)
+                                }}
+                              />
+                              <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs font-medium">
+                                🌐 Remote
+                              </div>
+                            </div>
                           ))}
                         </div>
                         <div className="mt-2 text-xs text-gray-500 flex items-center">
                           <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
-                          Images are automatically optimized when available locally
+                          Images loaded directly from ExamTopics API
                         </div>
                       </div>
                     )}

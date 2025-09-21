@@ -9,7 +9,17 @@
       "Bash(curl:*)",
       "Bash(npm run build:*)",
       "WebFetch(domain:examtopicsweb-dwgjfcfgdecucahz.northeurope-01.azurewebsites.net)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(npx gatsby develop:*)",
+      "Bash(start http://localhost:8001/az-204-exam)",
+      "Bash(gh run list:*)",
+      "Bash(mkdir:*)",
+      "Bash(move:*)",
+      "Bash(cmd /c \"move src\\images\\az-204-exam\\* archive\\images\\az-204-exam\\\")",
+      "Bash(robocopy:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(npm run develop:*)"
     ],
     "deny": [],
     "ask": []

@@ -7,3 +7,6 @@ public
 .env.production
 .env.test
 mcp-servers/**/.env
+
+# Archive folder - excluded from build pipeline
+archive/
