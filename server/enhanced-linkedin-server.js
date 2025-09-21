@@ -872,8 +872,18 @@ Sincerely,
 
 const PORT = process.env.PORT || 8080;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Enhanced LinkedIn Career Server running on http://localhost:${PORT}`);
+// Error handling for unhandled exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Enhanced LinkedIn Career Server running on http://0.0.0.0:${PORT}`);
   console.log(`Available endpoints:`);
   console.log(`  Health: GET /health`);
   console.log(`  Enhanced Jobs: GET /api/linkedin/jobs?keywords=...&location=...`);
@@ -885,4 +895,12 @@ app.listen(PORT, () => {
   console.log('📊 Multi-API job aggregation enabled');
   console.log('🤖 Claude AI integration ready');
   console.log('🔍 Real LinkedIn job scraping enabled');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
 });
