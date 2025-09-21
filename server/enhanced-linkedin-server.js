@@ -3,7 +3,8 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 
-// Azure App Service deployment - trigger deployment workflow
+// Azure App Service deployment - fix application error issue
+// Updated: 2025-09-21 - Ensure proper startup and error handling
 
 const app = express();
 
