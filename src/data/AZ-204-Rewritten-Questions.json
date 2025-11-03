@@ -1,0 +1,132 @@
+[
+  {
+    "question_number": "N/A",
+    "question_text": "Examine the underlined section of this statement to assess its accuracy.Your Azure Active Directory Azure (Azure AD) tenant has an Azure subscription linked to it.A mobile application developed by your team requests Azure AD access tokens through the OAuth 2 implicit grant flow.This mobile app requires registration within Azure AD.To complete the registration process, you need the developer to provide a redirect URI.Directions: Assess the underlined portion. If it correctly completes the statement, choose \"No change is needed.\" If incorrect, select the option that corrects the statement.",
+    "options": [
+      {
+        "text": "a secret"
+      },
+      {
+        "text": "a login hint"
+      }
+    ],
+    "correct_answer": "A",
+    "correctAnswers": [
+      0
+    ],
+    "explanation": "The OAuth 2.0 implicit grant flow is not recommended for mobile applications due to security concerns. The authorization code flow is the recommended approach for mobile and native applications. For app registration in Azure AD, a redirect URI is required to receive the authorization code or tokens. Therefore, the original statement is correct - you do require a redirect URI from the developer for registration purposes.",
+    "discussion_link": "N/A",
+    "sequential_number": 1,
+    "question_images": [],
+    "answer_images": [],
+    "explanation_reference": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-implicit-grant-flow"
+  },
+  {
+    "question_number": "N/A",
+    "question_text": "You are implementing an Azure key vault through PowerShell commands.Company policy mandates that deleted key vault items remain retrievable for a 90-day period.Which pair of PowerShell parameters must be configured jointly to satisfy this retention requirement? (Each correct answer presents part of the solution. Choose two.)",
+    "options": [
+      {
+        "text": "A. -EnablePurgeProtection"
+      },
+      {
+        "text": "B. -EnableSoftDelete"
+      },
+      {
+        "text": "C. -Sku"
+      },
+      {
+        "text": "D. -SoftDeleteRetentionInDays"
+      },
+      {
+        "text": "E. -Location"
+      }
+    ],
+    "correct_answer": "BD",
+    "correctAnswers": [
+      1,
+      3
+    ],
+    "explanation": "To enable soft delete with a 90-day retention period for Azure Key Vault, you need to use both -EnableSoftDelete and -SoftDeleteRetentionInDays parameters. The -EnableSoftDelete parameter enables the soft delete feature, while -SoftDeleteRetentionInDays specifies the retention period (90 days in this case).",
+    "discussion_link": "N/A",
+    "sequential_number": 2,
+    "question_images": [],
+    "answer_images": [],
+    "explanation_reference": "https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview"
+  },
+  {
+    "question_number": "N/A",
+    "question_text": "INTERACTIVE SELECTION -Your organization operates an Azure AD tenant environment.You want to implement a policy that mandates multi-factor authentication (MFA) for all users when they access the Azure portal.Implementation should utilize Conditional Access policies for this security measure.What three configuration steps should be completed in order? Select the correct options in the response area.NOTE: Each accurate choice earns one point. Hot Area:",
+    "options": [],
+    "correct_answer": "",
+    "correctAnswers": [],
+    "explanation": "To require MFA for all users accessing the Azure portal using Conditional Access, configure: 1. **Users and groups**: Select 'All users' to apply the policy universally. 2. **Cloud apps**: Select 'Microsoft Azure Management' which represents the Azure portal. 3. **Grant controls**: Choose 'Require multi-factor authentication' to enforce MFA.",
+    "discussion_link": "N/A",
+    "sequential_number": 3,
+    "question_images": [
+      "/assets/examimages/question3_qimage1"
+    ],
+    "answer_images": [
+      "/assets/examimages/question3_aimage1"
+    ],
+    "explanation_reference": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-all-users-mfa-strength"
+  },
+  {
+    "question_number": "N/A",
+    "question_text": "You oversee an Azure SQL database with Azure AD authentication enabled.On-premises Active Directory users must be able to establish connections through SQL Server Management Studio.Authentication should occur using their existing on-premises Active Directory credentials.Which authentication type is recommended for this requirement?",
+    "options": [
+      {
+        "text": "A. SQL Server Authentication"
+      },
+      {
+        "text": "B. Azure AD Password authentication"
+      },
+      {
+        "text": "C. Azure AD Integrated authentication"
+      },
+      {
+        "text": "D. Azure AD Service Principal authentication"
+      }
+    ],
+    "correct_answer": "C",
+    "correctAnswers": [
+      2
+    ],
+    "explanation": "For developers to connect to Azure SQL Database using SSMS with their on-premises AD accounts while minimizing authentication prompts, use Azure AD Integrated authentication. This method leverages single sign-on (SSO) capabilities and seamlessly authenticates users with their existing domain credentials.",
+    "discussion_link": "N/A",
+    "sequential_number": 4,
+    "question_images": [],
+    "answer_images": [],
+    "explanation_reference": "https://learn.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-overview"
+  },
+  {
+    "question_number": "N/A",
+    "question_text": "Your application facilitates data movement from on-premises file servers to Azure Blob Storage.Keys, secrets, and certificates are maintained within Azure Key Vault by the application.The application leverages Azure Key Vault APIs for these operations.Both the application and key vault must be configured to enable recovery from unintentional deletion within a 90-day timeframe.What configuration is required?",
+    "options": [
+      {
+        "text": "A. -EnablePurgeProtection"
+      },
+      {
+        "text": "B. -EnableSoftDelete"
+      },
+      {
+        "text": "C. -Sku"
+      },
+      {
+        "text": "D. -SoftDeleteRetentionInDays"
+      },
+      {
+        "text": "E. -Location"
+      }
+    ],
+    "correct_answer": "B",
+    "correctAnswers": [
+      1
+    ],
+    "explanation": "By enabling soft delete, you allow objects in the Key Vault to be recovered for a specified retention period if deleted unintentionally.",
+    "discussion_link": "N/A",
+    "sequential_number": 5,
+    "question_images": [],
+    "answer_images": [],
+    "explanation_reference": "https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview"
+  }
+]

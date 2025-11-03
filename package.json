@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "develop": "gatsby develop",
+    "dev-fast": "gatsby develop --host 0.0.0.0 --port 8000 --open",
     "start": "node server/enhanced-linkedin-server.js",
     "build": "gatsby build",
     "serve": "gatsby serve",

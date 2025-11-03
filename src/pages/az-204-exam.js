@@ -3,7 +3,7 @@ import { Helmet } from 'react-helmet'
 import Layout from '../components/layout'
 
 // Import the processed local JSON data
-import processedQuestions from '../data/AZ-204_Final_Processed_Questions.json'
+import processedQuestions from '../data/AZ-204-Rewritten-Questions.json'
 
 // AZ-204 Exam Questions Page with Enhanced Local Data
 const AZ204ExamPage = () => {

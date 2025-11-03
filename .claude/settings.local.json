@@ -28,7 +28,11 @@
       "Bash(cmd /c:*)",
       "Bash(npm cache clean:*)",
       "Bash(set NODE_OPTIONS=--max-old-space-size=4096)",
-      "Bash(npm run dev-fast:*)"
+      "Bash(npm run dev-fast:*)",
+      "Bash(dir /s /b *.md 2)",
+      "Bash(nul)",
+      "Bash(netstat:*)",
+      "Bash(powershell -Command:*)"
     ],
     "deny": [],
     "ask": []

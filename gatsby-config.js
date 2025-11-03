@@ -16,6 +16,15 @@ module.exports = {
     author: `@iarunpaul`,
     siteUrl: `https://web.iarunpaul.com`, // Update with your custom domain
   },
+  developMiddleware: app => {
+    app.use(
+      '/___graphql',
+      (req, res, next) => {
+        res.header('Access-Control-Allow-Origin', '*')
+        next()
+      }
+    )
+  },
   plugins: [
     `gatsby-plugin-image`,
     `gatsby-plugin-tailwindcss`, // Add Tailwind CSS support
@@ -58,7 +67,7 @@ module.exports = {
             resolve: `gatsby-remark-images`,
             options: {
               maxWidth: 800,
-              quality: 90,
+              quality: 75,
               withWebp: true,
               loading: "lazy",
             },
@@ -152,7 +161,7 @@ module.exports = {
             resolve: `gatsby-remark-images`,
             options: {
               maxWidth: 800,
-              quality: 90,
+              quality: 75,
               withWebp: true,
               loading: "lazy",
               linkImagesToOriginal: false,

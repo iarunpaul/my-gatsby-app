@@ -1,0 +1,787 @@
+---
+title: "Kiota Client in .NET: Concepts and Practical Example"
+description: "Learn how to use Kiota to generate strongly-typed API clients from OpenAPI specifications, with practical examples of custom request configuration patterns in .NET"
+date: "2025-11-03"
+tags: ["dotnet", "kiota", "api-client", "openapi", "csharp", "rest-api"]
+slug: "kiota-client-dotnet"
+hero_image: "./Kiota_client.jpeg"
+hero_image_alt: "Kiota - Microsoft's OpenAPI client generator"
+hero_image_credit_text: "Bing Create"
+hero_image_credit_link: "https://www.bing.com/images/create"
+featured: true
+type: "article"
+---
+
+# Kiota Client in .NET: Concepts and Practical Example
+
+Kiota is an open-source project from Microsoft that generates strongly-typed API clients from OpenAPI specifications. It enables developers to interact with RESTful APIs in a type-safe, idiomatic way using .NET, TypeScript, Python, Go, and more. This post explains the general concepts behind Kiota and demonstrates a practical usage pattern from a real-world codebase.
+
+---
+
+## What is Kiota?
+
+Kiota automates the creation of API clients by parsing OpenAPI specifications and generating code that handles HTTP requests, authentication, serialization, and error handling. This approach reduces boilerplate, improves maintainability, and ensures type safety.
+
+**Key Features:**
+- **Strongly-typed clients:** Generated code matches your API schema
+- **Consistent request building:** Abstracts away manual HTTP request construction
+- **Extensible:** Supports custom authentication, middleware, and request configuration
+- **Multi-language support:** .NET, TypeScript, Python, Go, and more
+- **Automatic serialization:** Built-in JSON serialization/deserialization
+- **IntelliSense support:** Full IDE support with auto-completion
+
+---
+
+## Why Choose Kiota Over Traditional Approaches?
+
+### Traditional API Client Approach
+```csharp
+// Manual HTTP client usage - error-prone and verbose
+public async Task<Order> GetOrderAsync(string orderId)
+{
+    using var httpClient = new HttpClient();
+    httpClient.BaseAddress = new Uri("https://api.example.com");
+    httpClient.DefaultRequestHeaders.Add("AdministrationId", adminId);
+    httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {token}");
+
+    var response = await httpClient.GetAsync($"/orders/{orderId}");
+    response.EnsureSuccessStatusCode();
+
+    var json = await response.Content.ReadAsStringAsync();
+    return JsonSerializer.Deserialize<Order>(json);
+}
+```
+
+### Kiota-Generated Client Approach
+```csharp
+// Strongly-typed, clean, and maintainable
+public async Task<Order> GetOrderAsync(string orderId)
+{
+    return await client.Orders[orderId].GetAsync();
+}
+```
+
+**Benefits:**
+- Type safety at compile-time
+- Automatic serialization/deserialization
+- Built-in error handling
+- Consistent API across all endpoints
+- Reduced boilerplate code
+
+---
+
+## Typical Kiota Client Usage
+
+A Kiota-generated client exposes request builders and methods for each API operation. You configure requests using request configuration objects, set headers, query parameters, and pass cancellation tokens for async operations.
+
+**Example Usage:**
+
+```csharp
+// Basic request with configuration
+var client = new MyApiClient(httpClient);
+
+var result = await client.Users.GetAsync(config =>
+{
+    config.QueryParameters.Top = 10;
+    config.QueryParameters.Filter = "status eq 'active'";
+    config.Headers.Add("Authorization", "Bearer ...");
+}, cancellationToken);
+```
+
+**With Query Parameters:**
+
+```csharp
+// Using strongly-typed query parameters
+var queryParams = new UsersRequestBuilder.UsersRequestBuilderGetQueryParameters
+{
+    Top = 10,
+    Skip = 0,
+    OrderBy = new[] { "name" },
+    Filter = "status eq 'active'"
+};
+
+var result = await client.Users.GetAsync(config =>
+{
+    config.QueryParameters = queryParams;
+}, cancellationToken);
+```
+
+---
+
+## Custom Kiota Client Request Configuration
+
+The following example provides extension methods to execute requests within a specific message context. This ensures that every request includes required headers (like `AdministrationId` and `AccountCode`) and supports custom query parameters.
+
+### The MessageContext Pattern
+
+In enterprise applications, you often need to propagate contextual information across API calls. This pattern ensures consistency and reduces boilerplate.
+
+```csharp
+public class MessageContext
+{
+    public MessageMetaData MessageMetaData { get; set; }
+    public CancellationToken CancellationToken { get; set; }
+}
+
+public class MessageMetaData
+{
+    public string AdministrationId { get; set; }
+    public string AdministrationAccountCode { get; set; }
+}
+```
+
+### Extension Methods for Context-Aware Requests
+
+```csharp
+public static class KiotaClientRequestConfigurator
+{
+    /// <summary>
+    /// Execute a request without return value within a message context
+    /// </summary>
+    public static Task ExecuteWithinContext<TClient>(
+        this TClient client,
+        MessageContext context,
+        RequestDelegate<TClient> request)
+        where TClient : notnull, BaseRequestBuilder
+    {
+        return request(
+            client,
+            GetRequestConfigurationAction(context),
+            context.CancellationToken);
+    }
+
+    /// <summary>
+    /// Execute a request with return value within a message context
+    /// </summary>
+    public static Task<TResult> ExecuteWithinContext<TClient, TResult>(
+        this TClient client,
+        MessageContext context,
+        RequestDelegate<TClient, TResult> request)
+        where TClient : notnull, BaseRequestBuilder
+    {
+        return request(
+            client,
+            GetRequestConfigurationAction(context),
+            context.CancellationToken);
+    }
+
+    /// <summary>
+    /// Execute a request with custom query parameters within a message context
+    /// </summary>
+    public static Task<TResult> ExecuteWithinContext<TClient, TResult, TQuery>(
+        this TClient client,
+        MessageContext context,
+        TQuery query,
+        RequestDelegate<TClient, TResult, TQuery> request)
+        where TClient : notnull, BaseRequestBuilder
+        where TQuery : class, new()
+    {
+        return request(
+            client,
+            GetRequestConfigurationAction<TQuery>(context, query),
+            context.CancellationToken);
+    }
+
+    /// <summary>
+    /// Creates request configuration action for default query parameters
+    /// </summary>
+    private static Action<RequestConfiguration<DefaultQueryParameters>>
+        GetRequestConfigurationAction(MessageContext context) => config =>
+    {
+        config.Headers.Add("AdministrationId", context.MessageMetaData.AdministrationId);
+        config.Headers.Add("AccountCode", context.MessageMetaData.AdministrationAccountCode);
+    };
+
+    /// <summary>
+    /// Creates request configuration action for custom query parameters
+    /// </summary>
+    private static Action<RequestConfiguration<TQuery>>
+        GetRequestConfigurationAction<TQuery>(MessageContext context, TQuery query)
+        where TQuery : class, new() => config =>
+    {
+        config.QueryParameters = query;
+        config.Headers.Add("AdministrationId", context.MessageMetaData.AdministrationId);
+        config.Headers.Add("AccountCode", context.MessageMetaData.AdministrationAccountCode);
+    };
+
+    // Delegate definitions for flexible request execution
+    public delegate Task RequestDelegate<TClient>(
+        TClient context,
+        Action<RequestConfiguration<DefaultQueryParameters>> requestConfiguration,
+        CancellationToken cancellationToken)
+        where TClient : notnull, BaseRequestBuilder;
+
+    public delegate Task<TResult> RequestDelegate<TClient, TResult>(
+        TClient context,
+        Action<RequestConfiguration<DefaultQueryParameters>> requestConfiguration,
+        CancellationToken cancellationToken)
+        where TClient : notnull, BaseRequestBuilder;
+
+    public delegate Task<TResult> RequestDelegate<TClient, TResult, TQuery>(
+        TClient context,
+        Action<RequestConfiguration<TQuery>> requestConfiguration,
+        CancellationToken cancellationToken)
+        where TClient : notnull, BaseRequestBuilder
+        where TQuery : class, new();
+}
+```
+
+---
+
+## How Does This Help?
+
+### 1. Contextual Requests
+Ensures every API call includes business-critical headers automatically:
+```csharp
+// Headers are added automatically from context
+await orderClient.ExecuteWithinContext(
+    messageContext,
+    async (client, config, token) =>
+        await client.GetAsync(config, token)
+);
+```
+
+### 2. Reusable Patterns
+Extension methods simplify request execution and reduce code duplication:
+```csharp
+// No need to manually add headers every time
+// Before: 15 lines of repetitive code
+// After: 3 lines of clean code
+```
+
+### 3. Type Safety
+Strongly-typed delegates and configuration objects reduce runtime errors:
+```csharp
+// Compile-time checking ensures correct parameter types
+// IDE provides IntelliSense for all available options
+```
+
+### 4. Separation of Concerns
+Business logic stays clean, infrastructure concerns are handled separately:
+```csharp
+// Business layer
+public async Task<Order> ProcessOrder(string orderId)
+{
+    // Focus on business logic, not HTTP details
+    var order = await GetOrderAsync(orderId);
+    return ProcessOrderLogic(order);
+}
+```
+
+---
+
+## Practical Example Usage
+
+### Basic Request Execution
+
+```csharp
+// Fetch orders with automatic context propagation
+var orders = await orderClient.ExecuteWithinContext(
+    messageContext,
+    async (client, config, token) =>
+        await client.GetAsync(config, token)
+);
+```
+
+### Request with Query Parameters
+
+```csharp
+// Define query parameters
+var query = new OrderQueryParameters
+{
+    Status = "Open",
+    From = DateTime.UtcNow.AddDays(-30),
+    Top = 100,
+    OrderBy = new[] { "createdDate desc" }
+};
+
+// Execute with custom query parameters
+var openOrders = await orderClient.ExecuteWithinContext(
+    messageContext,
+    query,
+    async (client, config, token) =>
+        await client.GetAsync(config, token)
+);
+```
+
+### POST Request with Body
+
+```csharp
+// Create new order
+var newOrder = new CreateOrderRequest
+{
+    CustomerId = "12345",
+    Items = new[] { new OrderItem { ProductId = "P001", Quantity = 2 } }
+};
+
+await orderClient.ExecuteWithinContext(
+    messageContext,
+    async (client, config, token) =>
+        await client.PostAsync(newOrder, config, token)
+);
+```
+
+### Real-World Service Implementation
+
+```csharp
+public class OrderService
+{
+    private readonly IOrderClient _orderClient;
+
+    public OrderService(IOrderClient orderClient)
+    {
+        _orderClient = orderClient;
+    }
+
+    public async Task<IEnumerable<Order>> GetPendingOrdersAsync(
+        MessageContext context)
+    {
+        var query = new OrderQueryParameters
+        {
+            Status = "Pending",
+            Top = 50
+        };
+
+        return await _orderClient.ExecuteWithinContext(
+            context,
+            query,
+            async (client, config, token) =>
+                await client.GetAsync(config, token)
+        );
+    }
+
+    public async Task<Order> UpdateOrderStatusAsync(
+        string orderId,
+        string newStatus,
+        MessageContext context)
+    {
+        var updateRequest = new UpdateOrderRequest { Status = newStatus };
+
+        return await _orderClient[orderId].ExecuteWithinContext(
+            context,
+            async (client, config, token) =>
+                await client.PatchAsync(updateRequest, config, token)
+        );
+    }
+}
+```
+
+---
+
+## Advanced Patterns
+
+### Combining Multiple Contexts
+
+```csharp
+public static class MultiContextExtensions
+{
+    public static Task<TResult> ExecuteWithAudit<TClient, TResult>(
+        this TClient client,
+        MessageContext context,
+        AuditContext auditContext,
+        RequestDelegate<TClient, TResult> request)
+        where TClient : notnull, BaseRequestBuilder
+    {
+        return request(client, config =>
+        {
+            // Add message context headers
+            config.Headers.Add("AdministrationId",
+                context.MessageMetaData.AdministrationId);
+            config.Headers.Add("AccountCode",
+                context.MessageMetaData.AdministrationAccountCode);
+
+            // Add audit context headers
+            config.Headers.Add("X-User-Id", auditContext.UserId);
+            config.Headers.Add("X-Correlation-Id", auditContext.CorrelationId);
+        }, context.CancellationToken);
+    }
+}
+```
+
+### Retry and Resilience Policies
+
+```csharp
+using Polly;
+
+public static class ResilientKiotaExtensions
+{
+    private static readonly IAsyncPolicy _retryPolicy = Policy
+        .Handle<HttpRequestException>()
+        .WaitAndRetryAsync(3, retryAttempt =>
+            TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+
+    public static async Task<TResult> ExecuteWithRetry<TClient, TResult>(
+        this TClient client,
+        MessageContext context,
+        RequestDelegate<TClient, TResult> request)
+        where TClient : notnull, BaseRequestBuilder
+    {
+        return await _retryPolicy.ExecuteAsync(async () =>
+            await client.ExecuteWithinContext(context, request)
+        );
+    }
+}
+```
+
+---
+
+## Setting Up Kiota in Your Project
+
+### 1. Install Kiota CLI
+
+```bash
+# Install Kiota globally
+dotnet tool install --global Microsoft.OpenApi.Kiota
+
+# Or update existing installation
+dotnet tool update --global Microsoft.OpenApi.Kiota
+```
+
+### 2. Generate Client from OpenAPI Spec
+
+```bash
+# Generate client code
+kiota generate \
+  --openapi https://api.example.com/swagger/v1/swagger.json \
+  --language CSharp \
+  --class-name MyApiClient \
+  --namespace-name MyCompany.ApiClients \
+  --output ./Generated/MyApiClient
+```
+
+### 3. Add Required Packages
+
+```bash
+# Add Kiota dependencies
+dotnet add package Microsoft.Kiota.Abstractions
+dotnet add package Microsoft.Kiota.Http.HttpClientLibrary
+dotnet add package Microsoft.Kiota.Serialization.Json
+dotnet add package Microsoft.Kiota.Serialization.Text
+dotnet add package Microsoft.Kiota.Authentication.Azure
+```
+
+### 4. Configure Dependency Injection
+
+```csharp
+// In Program.cs or Startup.cs
+services.AddHttpClient<IMyApiClient, MyApiClient>((sp, client) =>
+{
+    client.BaseAddress = new Uri("https://api.example.com");
+})
+.AddHttpMessageHandler<AuthenticationHandler>();
+
+// Register Kiota request adapter
+services.AddScoped<IRequestAdapter>(sp =>
+{
+    var httpClient = sp.GetRequiredService<IHttpClientFactory>()
+        .CreateClient(nameof(MyApiClient));
+    return new HttpClientRequestAdapter(
+        new AnonymousAuthenticationProvider(),
+        httpClient: httpClient);
+});
+```
+
+---
+
+## Best Practices
+
+### 1. Centralize Configuration
+```csharp
+public static class KiotaConfiguration
+{
+    public static void ConfigureKiotaClients(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Configure all Kiota clients in one place
+        services.AddKiotaClient<IOrderClient>(configuration, "Orders");
+        services.AddKiotaClient<ICustomerClient>(configuration, "Customers");
+        services.AddKiotaClient<IInventoryClient>(configuration, "Inventory");
+    }
+}
+```
+
+### 2. Use Scoped Services for Context
+```csharp
+// Register context provider
+services.AddScoped<IMessageContextProvider, MessageContextProvider>();
+
+// Use in services
+public class OrderService
+{
+    private readonly IOrderClient _client;
+    private readonly IMessageContextProvider _contextProvider;
+
+    public async Task<Order> GetOrderAsync(string orderId)
+    {
+        var context = _contextProvider.GetContext();
+        return await _client.ExecuteWithinContext(
+            context,
+            async (c, config, token) =>
+                await c[orderId].GetAsync(config, token)
+        );
+    }
+}
+```
+
+### 3. Implement Custom Error Handling
+```csharp
+public static async Task<TResult> ExecuteWithErrorHandling<TClient, TResult>(
+    this TClient client,
+    MessageContext context,
+    RequestDelegate<TClient, TResult> request)
+    where TClient : notnull, BaseRequestBuilder
+{
+    try
+    {
+        return await client.ExecuteWithinContext(context, request);
+    }
+    catch (ApiException ex) when (ex.ResponseStatusCode == 404)
+    {
+        throw new ResourceNotFoundException($"Resource not found", ex);
+    }
+    catch (ApiException ex) when (ex.ResponseStatusCode == 401)
+    {
+        throw new UnauthorizedException("Authentication failed", ex);
+    }
+    catch (ApiException ex)
+    {
+        throw new ApiClientException($"API call failed: {ex.Message}", ex);
+    }
+}
+```
+
+### 4. Leverage Caching
+```csharp
+public class CachedOrderClient : IOrderClient
+{
+    private readonly IOrderClient _innerClient;
+    private readonly IMemoryCache _cache;
+
+    public async Task<Order> GetOrderAsync(
+        string orderId,
+        MessageContext context)
+    {
+        var cacheKey = $"order:{orderId}";
+
+        if (_cache.TryGetValue<Order>(cacheKey, out var cached))
+            return cached;
+
+        var order = await _innerClient.ExecuteWithinContext(
+            context,
+            async (c, config, token) =>
+                await c[orderId].GetAsync(config, token)
+        );
+
+        _cache.Set(cacheKey, order, TimeSpan.FromMinutes(5));
+        return order;
+    }
+}
+```
+
+---
+
+## Testing Kiota Clients
+
+### Unit Testing with Mocks
+
+```csharp
+public class OrderServiceTests
+{
+    [Fact]
+    public async Task GetPendingOrders_ReturnsFilteredOrders()
+    {
+        // Arrange
+        var mockClient = new Mock<IOrderClient>();
+        var expectedOrders = new[] { new Order { Id = "1", Status = "Pending" } };
+
+        mockClient
+            .Setup(c => c.ExecuteWithinContext(
+                It.IsAny<MessageContext>(),
+                It.IsAny<OrderQueryParameters>(),
+                It.IsAny<RequestDelegate<IOrderClient, IEnumerable<Order>, OrderQueryParameters>>()))
+            .ReturnsAsync(expectedOrders);
+
+        var service = new OrderService(mockClient.Object);
+        var context = CreateTestContext();
+
+        // Act
+        var result = await service.GetPendingOrdersAsync(context);
+
+        // Assert
+        result.Should().BeEquivalentTo(expectedOrders);
+    }
+}
+```
+
+### Integration Testing
+
+```csharp
+public class OrderClientIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public OrderClientIntegrationTests(WebApplicationFactory<Program> factory)
+    {
+        _factory = factory;
+    }
+
+    [Fact]
+    public async Task GetOrders_ReturnsSuccessfully()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+        var adapter = new HttpClientRequestAdapter(
+            new AnonymousAuthenticationProvider(),
+            httpClient: client);
+        var orderClient = new OrderClient(adapter);
+
+        var context = CreateTestContext();
+
+        // Act
+        var orders = await orderClient.ExecuteWithinContext(
+            context,
+            async (c, config, token) => await c.GetAsync(config, token)
+        );
+
+        // Assert
+        orders.Should().NotBeNull();
+    }
+}
+```
+
+---
+
+## Performance Considerations
+
+### 1. HttpClient Reuse
+Always reuse HttpClient instances through `IHttpClientFactory`:
+
+```csharp
+// Good: Reuses HttpClient
+services.AddHttpClient<IOrderClient, OrderClient>();
+
+// Bad: Creates new HttpClient each time
+var client = new HttpClient(); // Don't do this!
+```
+
+### 2. Connection Pooling
+Configure connection limits for high-throughput scenarios:
+
+```csharp
+services.AddHttpClient<IOrderClient, OrderClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        MaxConnectionsPerServer = 20,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    });
+```
+
+### 3. Async All The Way
+Never block on async operations:
+
+```csharp
+// Good: Async all the way
+var order = await orderClient.GetAsync(config, token);
+
+// Bad: Blocking async code
+var order = orderClient.GetAsync(config, token).Result; // Don't do this!
+```
+
+---
+
+## Common Pitfalls and Solutions
+
+### Pitfall 1: Not Handling Cancellation Properly
+
+```csharp
+// Problem: Ignoring cancellation token
+public async Task<Order> GetOrderAsync(string orderId)
+{
+    return await _client[orderId].GetAsync();
+}
+
+// Solution: Always pass cancellation token
+public async Task<Order> GetOrderAsync(
+    string orderId,
+    CancellationToken cancellationToken = default)
+{
+    return await _client[orderId].GetAsync(
+        requestConfiguration: null,
+        cancellationToken);
+}
+```
+
+### Pitfall 2: Forgetting Required Headers
+
+```csharp
+// Problem: Manual header management in every call
+var order = await client.GetAsync(config =>
+{
+    config.Headers.Add("AdministrationId", adminId);
+    config.Headers.Add("AccountCode", accountCode);
+});
+
+// Solution: Use context-aware extensions
+var order = await client.ExecuteWithinContext(
+    messageContext,
+    async (c, cfg, token) => await c.GetAsync(cfg, token)
+);
+```
+
+### Pitfall 3: Not Disposing Resources
+
+```csharp
+// Problem: Memory leaks from undisposed clients
+var client = new HttpClient();
+var adapter = new HttpClientRequestAdapter(provider, httpClient: client);
+// Forgot to dispose!
+
+// Solution: Use dependency injection with proper lifetime
+services.AddScoped<IRequestAdapter>(sp => /* ... */);
+```
+
+---
+
+## Conclusion
+
+Kiota streamlines API client development in .NET by generating strongly-typed clients from OpenAPI specifications. With custom configurators like `KiotaClientRequestConfigurator`, you can enforce consistent request patterns and context propagation across your entire application.
+
+This approach is ideal for enterprise applications where:
+- Every request must carry specific metadata
+- Type safety is crucial for maintainability
+- Consistent patterns improve developer productivity
+- API evolution needs to be tracked and managed
+
+### Key Takeaways
+
+1. **Type Safety**: Kiota provides compile-time checking for API interactions
+2. **Reduced Boilerplate**: Extension methods eliminate repetitive code
+3. **Contextual Requests**: Automatic header propagation ensures consistency
+4. **Testability**: Easy to mock and test with standard .NET testing frameworks
+5. **Performance**: Proper HttpClient reuse and connection pooling
+6. **Maintainability**: Generated code stays in sync with API changes
+
+### Next Steps
+
+- Explore Kiota's authentication providers for OAuth, Azure AD, and more
+- Implement custom middleware for logging and monitoring
+- Set up automatic client regeneration in your CI/CD pipeline
+- Consider using Kiota for GraphQL APIs as well
+
+---
+
+## Further Reading
+
+- [Kiota Documentation](https://github.com/microsoft/kiota)
+- [OpenAPI Specification](https://swagger.io/specification/)
+- [Microsoft Graph Kiota SDK](https://learn.microsoft.com/en-us/graph/sdks/sdks-overview)
+- [Kiota CLI Reference](https://learn.microsoft.com/en-us/openapi/kiota/using)
+- [ASP.NET Core Dependency Injection](https://docs.microsoft.com/en-us/aspnet/core/fundamentals/dependency-injection)
+- [HttpClientFactory Best Practices](https://docs.microsoft.com/en-us/dotnet/architecture/microservices/implement-resilient-applications/use-httpclientfactory-to-implement-resilient-http-requests)
+
+---
+
+*Have you tried Kiota for your API clients? What patterns have you found most useful? Share your experiences and tips in the comments below!*
+
+Peace... 🍀
