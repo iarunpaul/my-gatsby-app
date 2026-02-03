@@ -1,0 +1,346 @@
+---
+title: "Building Real-Time Event-Driven UIs with Angular, SignalR, and RabbitMQ"
+date: "2026-02-03"
+description: "How uis can subscribe to backend events to sync the view with results from apis, in real-time."
+slug: "angular-signalr-rabbitmq-event-loop"
+tags: ["Angular", "SignalR", ".NET", "RabbitMQ", "Real-Time", "WebSockets", "Event-Driven Architecture"]
+hero_image: "./Real-time UI.webp"
+hero_image_alt: "Building Real-Time Event-Driven UIs"
+hero_image_credit_text: "Dall-E by OpenAI"
+hero_image_credit_link: "https://openai.com/index/dall-e-3/"
+---
+
+# Building Real-Time Event-Driven UIs with Angular, SignalR, and RabbitMQ
+
+Ever wondered how enterprise applications handle long-running operations while keeping the UI responsive? In this post, I'll walk through a pattern I've been working with—the **command-event loop**—and show you how to implement it with Angular, .NET SignalR, and RabbitMQ.
+
+## The Problem
+
+Traditional request-response APIs work great for quick operations. But what happens when:
+
+- Generating a PDF takes 5-10 seconds?
+- Processing a batch of invoices might fail midway?
+- Multiple users need to see updates in real-time?
+
+Blocking the HTTP request leads to timeouts and poor UX. Polling is inefficient. We need something better.
+
+## The Solution: Command-Event Pattern
+
+```
+┌─────────────────┐     HTTP POST      ┌─────────────────┐
+│   Angular UI    │ ─────────────────> │   .NET API      │
+│                 │     202 Accepted   │                 │
+│                 │ <───────────────── │                 │
+└────────┬────────┘                    └────────┬────────┘
+         │                                      │
+         │ WebSocket                            │ Publish
+         │ (SignalR)                            │ Command
+         │                                      ▼
+         │                             ┌─────────────────┐
+         │                             │   RabbitMQ      │
+         │                             │   Queue         │
+         │                             └────────┬────────┘
+         │                                      │
+         │                                      │ Consume
+         │                                      ▼
+         │                             ┌─────────────────┐
+         │      Push Event             │   Background    │
+         │ <─────────────────────────  │   Consumer      │
+         ▼                             └─────────────────┘
+┌─────────────────┐
+│   UI Updates    │
+└─────────────────┘
+```
+
+The flow:
+1. **UI sends command** via HTTP POST, gets back a `commandId` immediately
+2. **API queues the command** to RabbitMQ (or any message broker)
+3. **Background consumer** processes the command asynchronously
+4. **Consumer pushes result** via WebSocket (SignalR)
+5. **UI receives event**, filters by `commandId`, and updates
+
+## Project Structure
+
+```
+EventLoopPoc/
+├── EventLoopPoc.Api/          # .NET 8 Web API
+│   ├── Controllers/
+│   │   └── OrdersController.cs
+│   ├── Hubs/
+│   │   └── OrderHub.cs        # SignalR hub
+│   ├── Services/
+│   │   └── OrderConsumer.cs   # RabbitMQ consumer
+│   └── Models/
+│       └── OrderCommand.cs
+└── event-loop-ui/             # Angular 17
+    └── src/app/
+        ├── services/
+        │   ├── signalr.service.ts
+        │   └── order.service.ts
+        └── components/
+            └── order-panel/
+```
+
+## Backend Implementation
+
+### The Controller: Accept and Queue
+
+```csharp
+[HttpPost("print")]
+public IActionResult PrintOrders([FromBody] PrintOrdersRequest request)
+{
+    // Generate a unique command ID for tracking
+    var commandId = Guid.NewGuid().ToString();
+    var command = new OrderCommand(commandId, request.OrderIds);
+
+    // Publish to RabbitMQ - don't wait for processing
+    using var channel = _rabbitConnection.CreateModel();
+    channel.QueueDeclare("print-orders", durable: false, exclusive: false, autoDelete: false);
+
+    var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(command));
+    channel.BasicPublish("", "print-orders", null, body);
+
+    // Return immediately with the command ID
+    return Accepted(new PrintOrdersResponse(commandId));
+}
+```
+
+**Key insight**: The API returns `202 Accepted` immediately. The client uses the `commandId` to match the eventual result.
+
+### The Consumer: Process and Notify
+
+```csharp
+public class OrderConsumer : BackgroundService
+{
+    private readonly IHubContext<OrderHub> _hubContext;
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var channel = _rabbitConnection.CreateModel();
+        channel.QueueDeclare("print-orders", durable: false, exclusive: false, autoDelete: false);
+
+        var consumer = new EventingBasicConsumer(channel);
+        consumer.Received += async (_, ea) =>
+        {
+            var command = JsonSerializer.Deserialize<OrderCommand>(ea.Body.ToArray());
+
+            // Simulate long-running work (PDF generation, etc.)
+            await Task.Delay(Random.Shared.Next(2000, 4000), stoppingToken);
+
+            // Generate result
+            var blobUris = command.OrderIds
+                .Select(id => $"https://storage/documents/{id}.pdf")
+                .ToArray();
+
+            // Push to ALL connected clients via SignalR
+            await _hubContext.Clients.All.SendAsync(
+                "PrintCompleted",
+                new PrintCompletedEvent(command.CommandId, blobUris),
+                stoppingToken
+            );
+
+            channel.BasicAck(ea.DeliveryTag, false);
+        };
+
+        channel.BasicConsume("print-orders", autoAck: false, consumer);
+        return Task.CompletedTask;
+    }
+}
+```
+
+**Key insight**: The consumer uses `IHubContext<OrderHub>` to push events. It doesn't need a direct connection to any specific client—SignalR broadcasts to all connected clients.
+
+### SignalR Hub Setup
+
+```csharp
+// Program.cs
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<OrderConsumer>();
+
+// CORS for Angular dev server
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for SignalR
+    });
+});
+
+app.MapHub<OrderHub>("/hubs/orders");
+```
+
+The hub itself is minimal—just connection logging:
+
+```csharp
+public class OrderHub : Hub
+{
+    public override Task OnConnectedAsync()
+    {
+        _logger.LogInformation("Client connected: {ConnectionId}", Context.ConnectionId);
+        return base.OnConnectedAsync();
+    }
+}
+```
+
+## Frontend Implementation
+
+### SignalR Service: The Event Stream
+
+```typescript
+@Injectable({ providedIn: 'root' })
+export class SignalRService implements OnDestroy {
+    private connection: signalR.HubConnection;
+    private _printCompleted$ = new Subject<PrintCompletedEvent>();
+
+    public printCompleted$ = this._printCompleted$.asObservable();
+
+    constructor() {
+        this.connection = new signalR.HubConnectionBuilder()
+            .withUrl('http://localhost:5000/hubs/orders')
+            .withAutomaticReconnect([0, 2000, 5000, 10000])
+            .build();
+
+        // Register event handler
+        this.connection.on('PrintCompleted', (event: PrintCompletedEvent) => {
+            this._printCompleted$.next(event);
+        });
+
+        this.startConnection();
+    }
+}
+```
+
+**Key insight**: We expose events as RxJS Observables. This lets consumers use all the power of RxJS operators to filter, transform, and combine events.
+
+### Order Service: Command + Await Pattern
+
+```typescript
+@Injectable({ providedIn: 'root' })
+export class OrderService {
+    #http = inject(HttpClient);
+    #signalR = inject(SignalRService);
+
+    // Send the command
+    printOrders(orderIds: string[]): Observable<string> {
+        return this.#http
+            .post<{ commandId: string }>(`${this.apiUrl}/print`, { orderIds })
+            .pipe(map(response => response.commandId));
+    }
+
+    // Wait for the matching event
+    awaitResult(commandId: string): Observable<PrintResult> {
+        const completed$ = this.#signalR.printCompleted$.pipe(
+            filter(e => e.commandId === commandId),  // Match by commandId
+            map(e => ({ success: true, blobUris: e.blobUris })),
+            first()  // Complete after first match
+        );
+
+        const failed$ = this.#signalR.printFailed$.pipe(
+            filter(e => e.commandId === commandId),
+            map(e => ({ success: false, errorCode: e.errorCode })),
+            first()
+        );
+
+        // Whichever arrives first wins
+        return race(completed$, failed$);
+    }
+}
+```
+
+**Key insight**: The `filter(e => e.commandId === commandId)` is crucial. Since SignalR broadcasts to ALL clients, each client must filter for events relevant to their commands.
+
+### Component: Putting It Together
+
+```typescript
+print(): void {
+    const selectedIds = this.selectedOrders.map(o => o.id);
+
+    this.isProcessing = true;
+    this.updateTimeline('Command sent', 'active');
+
+    // Step 1: Send command
+    this.#orderService.printOrders(selectedIds).subscribe({
+        next: (commandId) => {
+            this.updateTimeline('Queued in RabbitMQ', 'done');
+            this.updateTimeline('Processing...', 'active');
+
+            // Step 2: Wait for result
+            this.#orderService.awaitResult(commandId).subscribe({
+                next: (result) => {
+                    this.updateTimeline('Event received', 'done');
+                    this.result = result;
+                    this.isProcessing = false;
+                }
+            });
+        }
+    });
+}
+```
+
+## The Magic: Why This Works
+
+### 1. Decoupled Processing
+The API doesn't know or care how long processing takes. It queues and returns. This prevents HTTP timeouts and keeps the API responsive.
+
+### 2. Reliable Delivery
+RabbitMQ ensures commands aren't lost. If the consumer crashes, messages stay in the queue until acknowledged.
+
+### 3. Real-Time Updates
+SignalR maintains a persistent WebSocket connection. Events arrive instantly—no polling needed.
+
+### 4. Scalable
+Multiple consumers can process the same queue in parallel. Multiple API instances can all publish to the same queue.
+
+### 5. Client Isolation
+Each client filters events by `commandId`. Even though all clients receive all events, they only react to their own.
+
+## Running the Demo
+
+```bash
+# Start RabbitMQ
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:management
+
+# Start backend
+cd EventLoopPoc.Api
+dotnet run --urls=http://localhost:5000
+
+# Start frontend
+cd event-loop-ui
+ng serve
+```
+
+Open `http://localhost:4200`, select some orders, and click Print. Watch the timeline show each step of the event flow in real-time.
+
+## Production Considerations
+
+This POC simplifies several things you'd need in production:
+
+1. **Authentication**: SignalR supports JWT tokens. Add `.withAccessTokenFactory()` in the connection builder.
+
+2. **Scoped Events**: Instead of broadcasting to all clients, use SignalR Groups to target specific users or sessions.
+
+3. **Error Handling**: Add retry logic, dead-letter queues, and proper error events.
+
+4. **Persistence**: Use durable queues and persistent messages in RabbitMQ.
+
+5. **Monitoring**: Add correlation IDs, structured logging, and distributed tracing.
+
+## Conclusion
+
+The command-event pattern is powerful for building responsive UIs over long-running operations. The key components:
+
+- **HTTP POST** for commands (fire-and-forget with tracking ID)
+- **Message queue** for reliable async processing
+- **WebSocket** for real-time event delivery
+- **Client-side filtering** to match events to commands
+
+This same pattern scales from simple POCs to enterprise systems handling millions of events. The technologies might differ (Azure Service Bus instead of RabbitMQ, Azure Web PubSub instead of SignalR), but the pattern remains the same.
+
+---
+
+*The full source code is available on [GitHub](https://dev.azure.com/iarunpaul0142/PollysProject/_git/EvenLoopPoc). Questions or feedback? Reach out on [LinkdIn](https://www.linkedin.com/in/arun-paul-polly-741042b9/).*
+
+*Peace... 🍀*
