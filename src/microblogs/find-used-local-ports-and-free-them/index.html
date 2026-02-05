@@ -1,0 +1,100 @@
+---
+title: "Kill Process Running on a Specific Port"
+date: "2026-02-05"
+tags: ["devops", "terminal", "networking", "troubleshooting"]
+description: "How to find and terminate a process that's blocking a specific port on Windows and Linux"
+slug: "kill-process-running-on-port"
+---
+
+# Kill Process Running on a Specific Port
+
+When you encounter "Port X is already in use" errors, you need to find and kill the process occupying that port.
+
+## Windows (PowerShell)
+
+### Find the process using the port
+
+```powershell
+netstat -ano | findstr :4221
+```
+
+Output example:
+```
+TCP    [::1]:4221    [::]:0    LISTENING    3912
+```
+
+The last number (3912) is the **Process ID (PID)**.
+
+### Kill the process
+
+```powershell
+taskkill /F /PID 3912
+```
+
+### One-liner (find and kill)
+
+```powershell
+# Replace 4221 with your port number
+$port = 4221
+$pid = (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess
+if ($pid) { Stop-Process -Id $pid -Force; Write-Host "Killed process $pid" } else { Write-Host "No process on port $port" }
+```
+
+## Linux / macOS (Bash)
+
+### Find the process using the port
+
+```bash
+lsof -i :4221
+```
+
+Or using netstat:
+
+```bash
+netstat -tulpn | grep :4221
+```
+
+### Kill the process
+
+```bash
+kill -9 3912
+```
+
+### One-liner (find and kill)
+
+```bash
+# Replace 4221 with your port number
+kill -9 $(lsof -t -i:4221) 2>/dev/null && echo "Process killed" || echo "No process on port 4221"
+```
+
+Or using fuser:
+
+```bash
+fuser -k 4221/tcp
+```
+
+## Common Use Cases
+
+- **Dev server conflicts**: When Angular/React/Node dev servers don't shut down properly
+- **Docker port binding**: When containers leave ports occupied after stopping
+- **Database connections**: When database servers (PostgreSQL, MySQL) hold onto ports
+
+## Pro Tip
+
+Add these as shell aliases for quick access:
+
+**PowerShell (add to `$PROFILE`):**
+```powershell
+function killport($port) {
+    $p = (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess
+    if ($p) { Stop-Process -Id $p -Force; "Killed PID $p on port $port" } else { "No process on port $port" }
+}
+```
+
+**Bash (add to `~/.bashrc` or `~/.zshrc`):**
+```bash
+killport() { kill -9 $(lsof -t -i:$1) 2>/dev/null && echo "Killed process on port $1" || echo "No process on port $1"; }
+```
+
+Then simply run: `killport 4221`
+This will save you time and frustration when dealing with port conflicts!
