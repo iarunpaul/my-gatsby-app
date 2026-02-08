@@ -1,0 +1,380 @@
+---
+title: "Building Real-Time Apps with SignalR"
+date: "2026-02-08"
+slug: "signalr-realtime-app"
+description: "A practical guide to SignalR hubs, event-based communication, and how to build an Angular service that handles real-time AI customer simulation."
+tags: ["SignalR", "Angular", ".NET", "Real-Time", "WebSocket"]
+author: "Arun Paul"
+---
+
+# Building Real-Time Apps with SignalR and Angular
+
+Real-time communication is table stakes for modern apps. Whether it's a chat system, live notifications, or an AI customer simulation that responds as you speak, users expect instant feedback. **ASP.NET Core SignalR** gives you that out of the box.
+
+In this post, I'll walk through SignalR from the ground up, then show how we used it to build **Diana** — an AI customer that role-plays phone calls with contact center agents, streaming responses in real-time via SignalR events.
+
+---
+
+## What is SignalR?
+
+SignalR is a library for ASP.NET Core that adds real-time web functionality. It abstracts over multiple transports:
+
+1. **WebSocket** (preferred) — full-duplex, lowest latency
+2. **Server-Sent Events** — server-to-client only
+3. **Long Polling** — fallback for older environments
+
+SignalR negotiates the best available transport automatically. You write your code once and it works everywhere.
+
+### The Hub Model
+
+The central abstraction is the **Hub** — a server-side class that acts as a high-level pipeline between clients and server. Think of it as a two-way RPC endpoint:
+
+- **Client invokes server methods** — `connection.invoke('SendMessage', 'hello')`
+- **Server invokes client methods** — `Clients.All.SendAsync('ReceiveMessage', message)`
+
+```
+┌──────────┐    invoke('SendMessage')       ┌──────────┐
+│  Angular │ ──────────────────────────▶   │  Hub.cs  │
+│  Client  │                                │  Server  │
+│          │ ◀──────────────────────────── │          │
+└──────────┘   SendAsync('ReceiveMessage')  └──────────┘
+```
+
+---
+
+## Part 1: A Simple Chat Hub
+
+Let's start with the basics — a chat room where messages are broadcast to everyone.
+
+### The Server Hub
+
+```csharp
+// Hubs/ChatHub.cs
+public class ChatHub : Hub
+{
+    // Client calls this → server broadcasts to the room
+    public async Task SendMessage(string user, string text, string room)
+    {
+        var message = new ChatMessage(user, text, room, DateTime.UtcNow);
+
+        // Send to everyone in the room EXCEPT the sender
+        await Clients.OthersInGroup(room).SendAsync("ReceiveMessage", message);
+
+        // Echo back to sender with server timestamp
+        await Clients.Caller.SendAsync("MessageSent", message);
+    }
+
+    public async Task JoinRoom(string user, string room)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, room);
+        await Clients.Group(room).SendAsync("UserJoined", user, room);
+    }
+
+    public async Task UserTyping(string user, string room)
+    {
+        await Clients.OthersInGroup(room).SendAsync("UserTyping", user);
+    }
+}
+```
+
+Key concepts here:
+
+- **`Clients.Caller`** — sends to the client that called the method
+- **`Clients.OthersInGroup(room)`** — sends to everyone in the group except the caller
+- **`Groups`** — logical groupings of connections (rooms, channels, sessions)
+- **`Context.ConnectionId`** — unique ID for each connected client
+
+### Wiring It Up
+
+```csharp
+// Program.cs
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSignalR();
+builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+    p.WithOrigins("http://localhost:4200")
+     .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
+
+var app = builder.Build();
+app.UseCors();
+app.MapHub<ChatHub>("/hubs/chat");
+app.Run();
+```
+
+That `.AllowCredentials()` is required — SignalR uses it for the WebSocket handshake.
+
+### The Angular Service
+
+```typescript
+// chat-signalr.service.ts
+@Injectable({ providedIn: 'root' })
+export class ChatSignalRService implements OnDestroy {
+  private connection: signalR.HubConnection;
+
+  // Server events → RxJS Observables
+  private messageReceived$ = new Subject<ChatMessage>();
+  readonly onMessageReceived = this.messageReceived$.asObservable();
+
+  constructor() {
+    this.connection = new signalR.HubConnectionBuilder()
+      .withUrl('https://localhost:5001/hubs/chat')
+      .withAutomaticReconnect()
+      .build();
+
+    // Map server events to Subjects
+    this.connection.on('ReceiveMessage', (msg: ChatMessage) => {
+      this.messageReceived$.next(msg);
+    });
+  }
+
+  async connect(): Promise<void> {
+    await this.connection.start();
+  }
+
+  // Invoke server methods
+  async sendMessage(user: string, text: string, room: string): Promise<void> {
+    await this.connection.invoke('SendMessage', user, text, room);
+  }
+
+  async joinRoom(user: string, room: string): Promise<void> {
+    await this.connection.invoke('JoinRoom', user, room);
+  }
+}
+```
+
+The pattern is straightforward:
+1. Build the connection with `HubConnectionBuilder`
+2. Register event handlers with `.on('EventName', callback)`
+3. Connect with `.start()`
+4. Call server methods with `.invoke('MethodName', ...args)`
+
+**Using RxJS Subjects to bridge SignalR events into the Angular reactive ecosystem is the key insight.** Components subscribe to Observables — they never touch the connection directly.
+
+---
+
+## Part 2: The Async Notification Pattern (Diana AI)
+
+The simple chat hub works great when the server can respond synchronously. But what about long-running operations? If an AI takes 3 seconds to generate a response, you don't want the hub method to block.
+
+This is where the **async notification pattern** comes in. It's the architecture behind Diana, our AI customer simulator.
+
+### The Problem
+
+```
+Client → Hub.UserSpoke("I can help with that") → ??? (AI takes 3 seconds) → Client
+```
+
+If the hub method awaits the AI, the client is blocking. If we fire-and-forget inside the hub, we lose the `Clients` context.
+
+### The Solution: IHubContext + Notification Service
+
+Decouple the hub from the response. The hub registers the client's connection, then the notification service pushes the result back later using `IHubContext<THub>`.
+
+```
+┌────────┐  invoke   ┌─────────┐  register    ┌──────────────────┐
+│ Client │ ────────▶ │   Hub   │ ──────────▶ │ NotificationSvc  │
+└────────┘           └─────────┘              │ (ConcurrentDict) │
+    ▲                     │                   └────────┬─────────┘
+    │                     ▼ fire-and-forget            │
+    │               ┌───────────┐                      │
+    │               │ AI Service│ ─── result ──────────┘
+    │               └───────────┘              │
+    │                                          ▼
+    │◀──── IHubContext.Clients.Client(id).SendAsync("DianaStartsSpeaking") ────
+```
+
+### The Notification Service
+
+```csharp
+// Services/SignalRNotificationService.cs
+public class SignalRNotificationService : INotificationService
+{
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly ConcurrentDictionary<Guid, string> _connections = new();
+
+    public void RegisterConnection(Guid sessionId, string connectionId)
+    {
+        _connections[sessionId] = connectionId;
+    }
+
+    public async Task NotifyDianaSpeaking(Guid sessionId, DianaMessage message)
+    {
+        if (_connections.TryGetValue(sessionId, out var connectionId))
+        {
+            // Send to the specific client, outside the hub
+            await _hubContext.Clients.Client(connectionId)
+                .SendAsync("DianaStartsSpeaking", message);
+        }
+    }
+}
+```
+
+The key: **`IHubContext<THub>`** lets you send SignalR messages from *anywhere* — background services, hosted workers, API controllers. You're not limited to inside the hub.
+
+### The Hub (Thin Coordinator)
+
+```csharp
+// Hubs/NotificationHub.cs
+public class NotificationHub : Hub
+{
+    private readonly INotificationService _notificationService;
+
+    public async Task InitiateSession(Guid sessionId)
+    {
+        // Register this client for async callbacks
+        _notificationService.RegisterConnection(sessionId, Context.ConnectionId);
+
+        // Fire-and-forget: AI generates greeting asynchronously
+        _ = Task.Run(async () =>
+        {
+            await _notificationService.NotifyProcessingStarted(sessionId, "Generating greeting");
+            // ... AI work ...
+            await _notificationService.NotifyDianaSpeaking(sessionId, greeting);
+        });
+    }
+
+    public async Task UserSpoke(Guid sessionId, string message)
+    {
+        await _notificationService.NotifyProcessingStarted(sessionId, "Processing");
+
+        // AI processes asynchronously, pushes result via notification service
+        _ = Task.Run(async () =>
+        {
+            var response = await _aiService.GenerateResponse(message);
+            await _notificationService.NotifyDianaSpeaking(sessionId, response);
+        });
+    }
+}
+```
+
+The hub methods return immediately. The client gets real-time status updates (`ProcessingStarted`, `DianaStartsSpeaking`) as the AI works.
+
+### The Angular Service (Advanced)
+
+```typescript
+// diana-signalr.service.ts
+@Injectable({ providedIn: 'root' })
+export class DianaSignalRService implements OnDestroy {
+  private connection: signalR.HubConnection | null = null;
+
+  // Typed event streams
+  private dianaSpeaking$ = new Subject<DianaMessage>();
+  private processingStarted$ = new Subject<ProcessingEvent>();
+  private error$ = new Subject<ErrorEvent>();
+
+  readonly onDianaSpeaking = this.dianaSpeaking$.asObservable();
+  readonly onProcessingStarted = this.processingStarted$.asObservable();
+  readonly onError = this.error$.asObservable();
+
+  async connect(sessionId: string, getToken?: () => string | null): Promise<void> {
+    this.connection = new signalR.HubConnectionBuilder()
+      .withUrl('/hubs/notification', {
+        // JWT token for authentication
+        accessTokenFactory: () => getToken?.() ?? '',
+      })
+      .withAutomaticReconnect([2000, 5000, 10000])
+      .build();
+
+    // Register typed event handlers
+    this.connection.on('DianaStartsSpeaking', (data: DianaMessage) => {
+      this.dianaSpeaking$.next(data);
+    });
+
+    this.connection.on('ProcessingStarted', (data: ProcessingEvent) => {
+      this.processingStarted$.next(data);
+    });
+
+    this.connection.on('Error', (data: ErrorEvent) => {
+      this.error$.next(data);
+    });
+
+    // Lifecycle monitoring
+    this.connection.onclose((err) => console.log('Disconnected', err));
+    this.connection.onreconnecting((err) => console.log('Reconnecting...', err));
+
+    await this.connection.start();
+  }
+
+  async userSpoke(message: string): Promise<void> {
+    await this.connection!.invoke('UserSpoke', this.sessionId, message);
+  }
+}
+```
+
+Three key differences from the simple chat service:
+
+1. **`accessTokenFactory`** — SignalR sends the JWT as a query parameter for WebSocket connections (since you can't set headers on a WebSocket handshake). The server validates it like any other Bearer token.
+
+2. **Custom reconnect intervals** — `[2000, 5000, 10000]` means retry at 2s, 5s, 10s then give up. The default exponential backoff may be too aggressive for demo scenarios.
+
+3. **Lifecycle handlers** — `onclose`, `onreconnecting`, `onreconnected` let you update UI state (show "reconnecting..." banners, disable inputs, etc.)
+
+---
+
+## The Event Contract
+
+Here's the complete event contract between server and client for the Diana system:
+
+### Server → Client (Events)
+
+| Event | Payload | When |
+|---|---|---|
+| `DianaStartsSpeaking` | `{ sessionId, text, audioUrl, emotion, timestamp, shouldEndCall }` | AI generated a response |
+| `ProcessingStarted` | `{ sessionId, state }` | AI is thinking |
+| `DianaInterrupted` | *(none)* | User interrupted Diana mid-sentence |
+| `Error` | `{ sessionId, message, error? }` | Something went wrong |
+
+### Client → Server (Invocations)
+
+| Method | Args | Purpose |
+|---|---|---|
+| `InitiateSession` | `sessionId: Guid` | Start the trial |
+| `UserSpoke` | `sessionId: Guid, message: string` | Send transcribed speech |
+| `UserInterrupted` | `sessionId: Guid` | Signal interruption |
+| `GetStatus` | `sessionId: Guid` | Poll session state |
+
+---
+
+## Key Patterns Summary
+
+### 1. RxJS Bridge Pattern
+Wrap `connection.on()` callbacks in RxJS Subjects. Components subscribe to typed Observables — they never touch SignalR directly. This keeps your components testable and decoupled.
+
+### 2. Async Notification Pattern
+For long-running operations: hub registers the connection, delegates to a background service, and the notification service pushes results back via `IHubContext`. The hub method returns immediately.
+
+### 3. Connection-to-Session Mapping
+Use `ConcurrentDictionary<Guid, string>` to map your domain sessions to SignalR connection IDs. This lets background services target specific clients.
+
+### 4. Reconnection Strategy
+Always configure `.withAutomaticReconnect()`. Choose between:
+- **Default** — exponential backoff, good for production
+- **Custom intervals** — `[2000, 5000, 10000]`, good for demos where you want fast recovery or graceful failure
+
+### 5. Authentication
+Use `accessTokenFactory` to inject JWT tokens. SignalR sends them as query parameters for WebSocket, or as Bearer headers for other transports. On the server, configure authentication as usual — the hub respects `[Authorize]`.
+
+---
+
+## Running the PoC
+
+```bash
+# Terminal 1: Start the .NET API
+cd signalr-poc-api
+dotnet run
+
+# Terminal 2: Start the Angular client
+cd signalr-poc-client
+ng serve
+```
+
+Open `http://localhost:4200` and try both tabs:
+- **Simple Chat** — connects to `/hubs/chat`, broadcasts messages
+- **Diana AI Demo** — connects to `/hubs/notification`, shows the async notification pattern with simulated AI responses
+
+---
+
+## Conclusion
+
+SignalR's hub model makes real-time communication straightforward. For simple use cases, a hub that broadcasts directly is all you need. For complex scenarios like AI simulations, the async notification pattern with `IHubContext` decouples your hubs from long-running work while keeping the client experience seamless.
+
+The combination of SignalR events + RxJS Observables in Angular is powerful. It gives you a reactive, typed, testable API that components can consume without knowing anything about WebSockets or connection management.
