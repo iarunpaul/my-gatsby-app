@@ -220,6 +220,37 @@ const ImageComparison = ({ beforeImage, afterImage, beforeLabel = "Before", afte
   )
 }
 
+// Callout component for highlighted notes, insights, warnings, etc.
+const Callout = ({ type = "info", children }) => {
+  const styles = {
+    insight: { border: "border-l-blue-500", bg: "bg-blue-50", icon: "\u{1F4A1}", title: "Key Insight" },
+    warning: { border: "border-l-yellow-500", bg: "bg-yellow-50", icon: "\u26A0\uFE0F", title: "Warning" },
+    info:    { border: "border-l-gray-500", bg: "bg-gray-50", icon: "\u2139\uFE0F", title: "Info" },
+    tip:     { border: "border-l-green-500", bg: "bg-green-50", icon: "\u2705", title: "Tip" },
+    danger:  { border: "border-l-red-500", bg: "bg-red-50", icon: "\u{1F6A8}", title: "Danger" },
+  }
+  const s = styles[type] || styles.info
+
+  return (
+    <div className={`${s.bg} ${s.border} border-l-4 rounded-r-lg p-4 my-6`}>
+      <p className="font-semibold mb-1">{s.icon} {s.title}</p>
+      <div className="text-sm text-gray-800">{children}</div>
+    </div>
+  )
+}
+
+// Table components so markdown tables render with proper styling in MDX
+const Table = (props) => (
+  <div className="overflow-x-auto my-6">
+    <table className="min-w-full border-collapse border border-gray-300 text-sm" {...props} />
+  </div>
+)
+const Thead = (props) => <thead className="bg-gray-100" {...props} />
+const Tbody = (props) => <tbody className="divide-y divide-gray-200" {...props} />
+const Tr = (props) => <tr className="hover:bg-gray-50" {...props} />
+const Th = (props) => <th className="border border-gray-300 px-4 py-2 text-left font-semibold" {...props} />
+const Td = (props) => <td className="border border-gray-300 px-4 py-2" {...props} />
+
 // Export components for use in MDX
 const mdxComponents = {
   CustomImage,
@@ -227,13 +258,22 @@ const mdxComponents = {
   FloatingImage,
   SimpleImage,
   ImageComparison,
+  Callout,
+  // Override native HTML table elements so markdown tables render styled
+  table: Table,
+  thead: Thead,
+  tbody: Tbody,
+  tr: Tr,
+  th: Th,
+  td: Td,
 }
 
 export default mdxComponents
-export { 
-  CustomImage, 
-  ImageGallery, 
-  FloatingImage, 
+export {
+  CustomImage,
+  ImageGallery,
+  FloatingImage,
   SimpleImage,
-  ImageComparison 
+  ImageComparison,
+  Callout
 }
