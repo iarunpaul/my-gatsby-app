@@ -1,0 +1,199 @@
+---
+title: "Multi-Agent as Tool: Why Delegation Beats Jack-of-All-Trades"
+date: "2026-02-15"
+description: "How using specialized agents as tools dramatically reduces token usage compared to a single agent loaded with every tool — demonstrated with Anthropic Claude and the Microsoft Agents Framework."
+tags: ["AI", "Anthropic", "Claude", "Multi-Agent", "Microsoft Agents Framework", ".NET", "Tool Use"]
+slug: "multi-agent-as-tool-anthropic"
+---
+
+import { Callout } from "../components/callout"
+
+# Multi-Agent as Tool: Why Delegation Beats Jack-of-All-Trades
+
+When building AI agents with tool use, a natural question arises: should you give one agent every tool it might need, or split responsibilities across specialized agents? The answer has real cost and performance implications.
+
+In this post, I demonstrate both approaches using **Anthropic Claude** and the **Microsoft Agents Framework**, and show why the delegation pattern wins — especially as the number of tools grows.
+
+## The Setup
+
+I built two competing architectures for the same task: **uppercase the string "Hello World"**.
+
+### Architecture A: Delegation Agent
+
+A **DelegateAgent** that owns no tools of its own. Instead, it delegates to specialized sub-agents, each wrapped as a tool:
+
+- **StringAgent** — 16 string manipulation tools (uppercase, lowercase, reverse, trim, count, replace, etc.)
+- **NumberAgent** — 17 number tools (arithmetic, prime check, fibonacci, factorial, etc.)
+
+The DelegateAgent only sees **2 tools**: `StringAgentAsTool` and `NumberAgentAsTool`.
+
+### Architecture B: Jack-of-All-Trades Agent
+
+A single **JackOfAllTradesAgent** loaded with all **33 tools** directly.
+
+## The Results
+
+Here is the actual output from running both approaches against the same prompt:
+
+### Delegate Agent
+
+```
+DELEGATE AGENT
+- Tool Call: 'StringAgentAsTool' [Agent: DelegateAgent] (Args: [query = Uppercase 'Hello World'])
+- Tool Call: 'Uppercase' [Agent: StringAgent] (Args: [input = Hello World])
+The result of uppercasing 'Hello World' is: **HELLO WORLD**
+  Input Tokens: 1,425
+  Output Tokens: 84
+```
+
+### Jack-of-All-Trades Agent
+
+```
+JACK OF ALL TRADES AGENT
+- Tool Call: 'Uppercase' [Agent: JackOfAllTradesAgent] (Args: [input = Hello World])
+The uppercase version of 'Hello World' is **HELLO WORLD**.
+  Input Tokens: 4,187
+  Output Tokens: 72
+```
+
+## The Token Cost Difference
+
+| Metric | Delegate Agent | Jack-of-All-Trades | Difference |
+|--------|---------------|---------------------|------------|
+| **Input Tokens** | 1,425 | 4,187 | **2.9x more** |
+| **Output Tokens** | 84 | 72 | ~similar |
+| **Total Tokens** | 1,509 | 4,259 | **2.8x more** |
+
+<Callout type="insight">
+The Jack-of-All-Trades agent consumed **nearly 3x more input tokens** for the exact same task. Every tool definition is serialized into the prompt — 33 tool schemas add up fast.
+</Callout>
+
+## Why Does This Happen?
+
+Every tool registered with an agent gets serialized as a JSON schema in the system prompt. Each tool definition includes:
+
+- The function name
+- A description
+- Parameter names, types, and descriptions
+- Required/optional markers
+
+With 33 tools, that is a **wall of schema** sent on every single API call — even if the agent only needs one tool.
+
+The Delegate Agent sidesteps this entirely. It only sees 2 high-level tool descriptions ("StringAgentAsTool" and "NumberAgentAsTool"). The specialized agent's 16 tools are only loaded when that agent is actually invoked.
+
+```
+DelegateAgent prompt:  2 tool schemas  → small input
+    └─► StringAgent prompt: 16 tool schemas → only loaded when needed
+    └─► NumberAgent prompt: 17 tool schemas → only loaded when needed
+
+JackOfAllTradesAgent prompt: 33 tool schemas → always loaded
+```
+
+## When Delegation Really Shines
+
+The savings compound as you scale:
+
+- **More tools** — Going from 33 to 100+ tools? The jack-of-all-trades approach becomes increasingly expensive per call.
+- **Multi-turn conversations** — Tool schemas are sent on *every* turn. Over a 10-turn conversation, the delegate agent saves `(4187 - 1425) * 10 = 27,620 tokens`.
+- **Specialized reasoning** — Each sub-agent has focused instructions and only relevant tools, leading to more accurate tool selection.
+- **Composability** — Need a new capability? Add a new specialized agent without bloating existing ones.
+
+## The Code
+
+The implementation uses the `Microsoft.Agents.AI.Anthropic` package with .NET 10. Here is the core pattern:
+
+### Specialized Agents
+
+```csharp
+AIAgent stringAgent = client
+    .AsAIAgent(
+        model: "claude-sonnet-4-5-20250929",
+        name: "StringAgent",
+        instructions: "You are string manipulator",
+        description: "An agent that manipulates strings",
+        tools:
+        [
+            AIFunctionFactory.Create(StringTools.Uppercase),
+            AIFunctionFactory.Create(StringTools.Lowercase),
+            AIFunctionFactory.Create(StringTools.Reverse),
+            // ... 13 more string tools
+        ])
+    .AsBuilder()
+    .Use(FunctionCallMiddleware)
+    .Build();
+```
+
+### Wrapping Agents as Tools
+
+The key API: `.AsAIFunction()` turns an entire agent into a callable tool:
+
+```csharp
+AIAgent delegationAgent = client
+    .AsAIAgent(
+        model: "claude-sonnet-4-5-20250929",
+        name: "DelegateAgent",
+        instructions: "You are a Delegator of String and Number Tasks. Never do such work yourself.",
+        description: "An agent that delegates to specialized agents",
+        tools:
+        [
+            stringAgent.AsAIFunction(new AIFunctionFactoryOptions
+            {
+                Name = "StringAgentAsTool"
+            }),
+            numberAgent.AsAIFunction(new AIFunctionFactoryOptions
+            {
+                Name = "NumberAgentAsTool"
+            })
+        ])
+    .AsBuilder()
+    .Use(FunctionCallMiddleware)
+    .Build();
+```
+
+### Middleware for Observability
+
+A function call middleware logs every tool invocation across the agent hierarchy:
+
+```csharp
+async ValueTask<object?> FunctionCallMiddleware(
+    AIAgent callingAgent,
+    FunctionInvocationContext context,
+    Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
+    CancellationToken cancellationToken)
+{
+    var details = $"- Tool Call: '{context.Function.Name}' [Agent: {callingAgent.Name}]";
+    if (context.Arguments.Count > 0)
+    {
+        details += $" (Args: {string.Join(",",
+            context.Arguments.Select(x => $"[{x.Key} = {x.Value}]"))})";
+    }
+    Console.WriteLine(details);
+    return await next(context, cancellationToken);
+}
+```
+
+## Key Takeaways
+
+1. **Tool schemas are expensive.** Every tool you register costs input tokens on every API call. Be intentional about what each agent can see.
+
+2. **Delegation is a token optimization strategy.** By hiding specialized tools behind agent-as-tool wrappers, you keep per-call costs low and only pay for specialized schemas when needed.
+
+3. **The pattern scales.** As your system grows to dozens or hundreds of tools, the delegation approach keeps individual agent prompts lean while the jack-of-all-trades approach becomes prohibitively expensive.
+
+4. **Focused agents reason better.** An agent with 2 tools ("delegate to strings" or "delegate to numbers") makes faster, more accurate routing decisions than one sorting through 33 options.
+
+5. **The Microsoft Agents Framework makes this easy.** The `.AsAIFunction()` extension method is all it takes to wrap one agent as a tool for another — and it works across providers (Anthropic, OpenAI, etc.) with the same API.
+
+## Try It Yourself
+
+The full source code is available on GitHub. You will need:
+
+- .NET 10 SDK
+- An Anthropic API key (set in `appsettings.Development.json`)
+- The `Microsoft.Agents.AI.Anthropic` NuGet package
+
+```bash
+dotnet run --project ConsoleApp1
+```
+
+Watch the token counts and ask yourself: can your agent system afford not to delegate?
