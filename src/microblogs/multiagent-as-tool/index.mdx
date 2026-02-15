@@ -8,6 +8,8 @@ slug: "multi-agent-as-tool-anthropic"
 
 # Multi-Agent as Tool: Why Delegation Beats Jack-of-All-Trades
 
+> This post is inspired by the excellent [Multi-Agent as Tool](https://www.youtube.com/watch?v=wL4V78s_wI4&t=36s) tutorial by **[Rasmus Wulff Jensen](https://www.linkedin.com/in/rasmuswulffjensen/)** ([@rwj_dk](https://www.youtube.com/@rwj_dk)). His original sample uses Azure OpenAI — I ported the concept to Anthropic Claude to compare token usage across architectures. Check out his [GitHub repo](https://github.com/rwjdk/MicrosoftAgentFrameworkSamples) for the full collection of Microsoft Agent Framework tutorials.
+
 When building AI agents with tool use, a natural question arises: should you give one agent every tool it might need, or split responsibilities across specialized agents? The answer has real cost and performance implications.
 
 In this post, I demonstrate both approaches using **Anthropic Claude** and the **Microsoft Agents Framework**, and show why the delegation pattern wins — especially as the number of tools grows.
