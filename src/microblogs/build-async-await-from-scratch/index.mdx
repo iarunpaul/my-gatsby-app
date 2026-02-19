@@ -1,0 +1,1122 @@
+---
+title: "Deep .NET: Building async/await from Scratch"
+date: "2026-02-19"
+description: "A walkthrough of the Deep .NET session with Stephen Toub and Scott Hanselman, building asynchronous programming primitives from the ground up in C#."
+tags: ["dotnet", "csharp", "async", "threading", "deep-dive"]
+---
+
+import { Callout } from '../components/Callout'
+
+# Deep .NET: Building async/await from Scratch
+
+> Based on the YouTube session **"Deep .NET: Writing async/await from scratch in C#"** with **Stephen Toub** and **Scott Hanselman** — one of the best deep dives into the .NET runtime you'll find anywhere.
+
+Here is a question most C# developers can't answer cleanly: **what is the difference between concurrency and asynchrony?**
+
+They sound like the same thing. They are not.
+
+**Concurrency** means multiple things are in progress at the same time. They may interleave on a single CPU or run truly in parallel on many cores — either way, several tasks are alive simultaneously. Concurrency is about *structure*.
+
+**Asynchrony** means you start something and move on without waiting for it to finish. The focus is entirely on *not blocking the caller*. Crucially, you do not need multiple threads to be asynchronous. JavaScript's single-threaded event loop is fully asynchronous. A coroutine is asynchronous. Neither requires a second thread.
+
+**Parallelism** is the third term in this family: multiple things *literally executing* at the same instant on different CPU cores. All parallelism is concurrent, but concurrency does not require parallelism.
+
+`async`/`await` in C# is fundamentally about **asynchrony** — freeing the caller to do other work while something is pending. Threads are one mechanism to achieve it, but they are not the definition of it. That distinction is the thread running through this entire walkthrough.
+
+Stephen Toub — the engineer largely responsible for the async machinery in .NET — makes this distinction at the very start of the session with Scott Hanselman, then proves it by building the whole stack from scratch. We follow along, phase by phase, writing real code and explaining every decision along the way.
+
+---
+
+## The Map
+
+Here is what we will build, in order:
+
+| Phase | What we build |
+|-------|--------------|
+| 1 | Understand the built-in `ThreadPool` |
+| 2 | Our own `ThreadPool` from scratch |
+| 3 | Our own `Task` from scratch |
+| 4 | Wire `ThreadPool` + `Task` together |
+| 5 | Async iterators and `yield` |
+
+Each phase builds on the last. By the end you will have working implementations of the core primitives that power every `await` in your production code.
+
+---
+
+## Phase 1 — Meeting the ThreadPool
+
+Before building anything, it helps to understand what you are replacing. Let's start with the simplest possible demonstration of the built-in .NET `ThreadPool`.
+
+```csharp
+for (int i = 0; i < 1000; i++)
+{
+    ThreadPool.QueueUserWorkItem(delegate
+    {
+        Console.WriteLine(i);
+        Thread.Sleep(1000);
+    });
+}
+Console.ReadLine();
+```
+
+Run this and you will see numbers printed to the console — but not in order, and not one by one. Several print simultaneously, then there is a pause, then more appear. That behaviour tells you everything important about a thread pool.
+
+### What is happening here?
+
+`ThreadPool.QueueUserWorkItem` hands a **delegate** (a unit of work) to the runtime's thread pool. The pool maintains a set of pre-created threads. When work arrives it picks an idle thread, runs the delegate on it, and returns that thread to the pool when the delegate finishes.
+
+The `Thread.Sleep(1000)` simulates work that takes time — like an I/O call or a database query. During that sleep the thread is blocked, doing nothing. The pool has to hand that slow work off to another thread if new items keep arriving.
+
+<Callout type="info">
+**Why a thread pool at all?**
+Creating a `Thread` is expensive — it allocates a stack, registers the thread with the OS scheduler, and takes measurable time. For short-lived work that happens thousands of times, spinning up a new thread for each item is wasteful. A pool pays the creation cost once and reuses threads forever.
+</Callout>
+
+### The closure capture bug — and the fix
+
+The first version of this code had a subtle but important bug:
+
+```csharp
+// BUGGY
+for (int i = 0; i < 1000; i++)
+{
+    ThreadPool.QueueUserWorkItem(delegate
+    {
+        Console.WriteLine(i);  // which 'i' is this?
+    });
+}
+```
+
+The delegate **captures the variable `i`** — not the *value* of `i` at the moment the delegate is created. `i` is a single variable that the loop keeps incrementing. By the time a thread pool thread actually picks up the work item and runs the delegate, the loop has almost certainly moved on. Many threads end up reading the same late value of `i`, so you see numbers repeated or skipped entirely. The output is wrong and non-deterministic.
+
+This is the classic **closure-over-loop-variable** bug, and it is one of the first real-world surprises you hit when work starts executing on a different timeline from the code that created it.
+
+The fix is to copy the current value into a new local variable *inside* the loop body. Each iteration gets its own `capturedValue`, and the delegate closes over that local copy instead of the shared loop variable:
+
+```csharp
+// FIXED
+for (int i = 0; i < 1000; i++)
+{
+    int capturedValue = i; // snapshot the value for this iteration
+    ThreadPool.QueueUserWorkItem(delegate
+    {
+        Console.WriteLine(capturedValue);
+        Thread.Sleep(1000);
+    });
+}
+Console.ReadLine();
+```
+
+Now every delegate has its own copy of the number that was current when it was queued. The output is still unordered — threads run in non-deterministic sequence — but each number appears exactly once, which is the correct behaviour.
+
+---
+
+## Phase 2 — Building `MyThreadPool`: The Naive Start
+
+Now we ditch the built-in `ThreadPool` and replace the call site with our own:
+
+```csharp
+for (int i = 0; i < 1000; i++)
+{
+    int capturedValue = i;
+    MyThreadPool.QueueUserWorkItem(delegate
+    {
+        Console.WriteLine(capturedValue);
+        Thread.Sleep(1000);
+    });
+}
+Console.ReadLine();
+
+static class MyThreadPool
+{
+    public static void QueueUserWorkItem(Action work)
+    {
+        new Thread(() => work.Invoke()).Start();
+    }
+}
+```
+
+The caller is identical to before — `MyThreadPool.QueueUserWorkItem` has the same shape as the built-in version. Internally though, it does the simplest thing imaginable: spin up a brand new `Thread` for every single work item and start it immediately.
+
+### Why this works — and why it's not a pool
+
+This actually runs correctly. Every delegate executes, every number prints. But look at what `QueueUserWorkItem` does on each call:
+
+1. Allocates a new `Thread` object
+2. Registers it with the OS scheduler
+3. Starts it
+4. The thread runs the work, finishes, and is discarded forever
+
+For 1000 items that means 1000 thread creations. Thread creation is not free — each one allocates a stack (typically 1 MB on Windows), involves a kernel call, and puts pressure on the OS scheduler. Do this at the scale of a real web server handling thousands of requests per second and you will run out of resources fast.
+
+A real thread pool solves this by doing the expensive work **once**: create a fixed set of threads up front and keep them alive, handing work items to idle threads rather than creating new ones. What we have right now is not a pool — it's a thread factory.
+
+### The signature choice: `Action` instead of `WaitCallback`
+
+The real `ThreadPool.QueueUserWorkItem` takes a `WaitCallback`, which is a delegate typed as `void(object? state)`. The state parameter exists for passing data without allocating a closure. We simplify to `Action` (no parameters) because we are building understanding, not a production API. The closure-capture pattern we already use makes the state parameter unnecessary for our purposes.
+
+### What a real pool needs next
+
+To go from "thread factory" to "thread pool" we need:
+
+- A **queue** to hold work items that arrive faster than threads can process them
+- A **fixed set of long-lived worker threads** that loop forever, pulling from that queue
+- A **signalling mechanism** so idle threads wait efficiently instead of spinning
+
+---
+
+## Phase 2 — The Real Pool
+
+Here is the upgrade. Three additions: a `BlockingCollection<Action>` as the queue, a static constructor that spins up exactly `Environment.ProcessorCount` worker threads, and those threads looping forever on `_workItems.Take()`:
+
+```csharp
+using System.Collections.Concurrent;
+
+static class MyThreadPool
+{
+    private static readonly BlockingCollection<Action> _workItems = new BlockingCollection<Action>();
+
+    public static void QueueUserWorkItem(Action work)
+    {
+        _workItems.Add(work);
+    }
+
+    static MyThreadPool()
+    {
+        for (int i = 0; i < Environment.ProcessorCount; i++)
+        {
+            Thread workerThread = new Thread(() =>
+            {
+                while (true)
+                {
+                    Action workItem = _workItems.Take(); // blocks until work arrives
+                    try
+                    {
+                        workItem();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error executing work item: {ex}");
+                    }
+                }
+            });
+            workerThread.IsBackground = true;
+            workerThread.Start();
+        }
+    }
+}
+```
+
+### Every piece earns its place
+
+**`BlockingCollection<Action>`** — a thread-safe queue from `System.Collections.Concurrent`. `Add` puts work on the queue. `Take` removes the next item — and if the queue is empty, `Take` **blocks the calling thread** until something arrives. That blocking behaviour is the signalling mechanism we needed. No spinning, no polling, no manual `Monitor` or `AutoResetEvent`. The idle thread is parked by the OS and woken up the moment work is enqueued.
+
+You might wonder: all 12 threads call `Take()` simultaneously — how does the queue guarantee each one gets a *different* item without an explicit `lock`?
+
+It does synchronize, just not with a `lock` statement. `BlockingCollection<T>` is built from two layers:
+
+- **`ConcurrentQueue<T>`** handles the actual dequeue. It uses CPU-level **atomic compare-and-swap** (CAS) operations via `Interlocked.CompareExchange`. A CAS says: *"if this memory location still holds value X, replace it with Y atomically."* If two threads race to dequeue the same item, one wins the CAS and gets the item; the other sees the value has already changed and retries on the next slot. No two threads ever claim the same item, and no OS-level lock is involved.
+
+- **`SemaphoreSlim`** handles the blocking. Every `Add` call increments the semaphore; every `Take` call decrements it. If the count is zero (queue empty), `Take` parks the thread cheaply — no busy-waiting. The moment `Add` fires, one waiting thread is woken.
+
+A `lock` is simpler to reason about but has a cost: acquiring a lock requires an OS kernel call when there is contention, which means a context switch. CAS stays entirely in user-space and is typically a single CPU instruction. For a high-throughput queue that thousands of threads hammer simultaneously, that difference matters significantly.
+
+**`Environment.ProcessorCount` threads** — the pool creates exactly as many worker threads as there are logical CPU cores. This is the same heuristic the real .NET `ThreadPool` starts with. More threads than cores means the OS spends time context-switching between them for no gain on CPU-bound work.
+
+**`workerThread.IsBackground = true`** — background threads do not prevent the process from exiting. If the main thread finishes (or `Console.ReadLine()` returns), the process shuts down and the worker threads are killed automatically. Without this flag, the app would hang forever because the `while (true)` loops never exit on their own.
+
+**Static constructor** — `static MyThreadPool()` runs exactly once, the first time anything in `MyThreadPool` is accessed. The threads are ready before the first `QueueUserWorkItem` call lands.
+
+**The `try/catch`** — worker threads must never crash. An unhandled exception on a background thread will silently kill that thread, permanently shrinking your pool. Wrapping every invocation in a try/catch keeps the worker alive regardless of what individual work items do.
+
+### Why you see numbers in batches — not one per second
+
+You might expect to see: one number, one second pause, one number, one second pause. What you actually see is a **burst of numbers all at once**, a one-second silence, then another burst. On a 12-core machine that burst is exactly 12 numbers. Here is why.
+
+The `for` loop on the main thread runs at full CPU speed — it enqueues all 1000 work items into `_workItems` in microseconds. The worker threads are pulling from that queue simultaneously. With 12 workers, the first 12 items are grabbed almost instantly and 12 threads all call `Thread.Sleep(1000)` at nearly the same moment. One second later, all 12 wake up together, print their number, and immediately pull the *next* item from the queue — starting another batch of 12 sleeps in lockstep.
+
+The pattern repeats: 12 prints → 1 second gap → 12 prints → 1 second gap.
+
+```
+t=0ms    workers 1-12 each grab one item, all sleep(1000) simultaneously
+t=1000ms all 12 wake, print, grab next item, all sleep(1000) again
+t=2000ms all 12 wake, print...
+```
+
+The "1 second per item" expectation comes from imagining a single thread working through a list. What you are seeing instead is **bounded parallelism**: `ProcessorCount` items making progress at the same time, each taking 1 second, so the wall-clock time for 1000 items is `1000 / ProcessorCount` seconds rather than 1000 seconds.
+
+<Callout type="info">
+This is exactly why thread pools matter for throughput. The work still takes 1 second per item. But with 12 threads working in parallel, you process 12× as many items in the same wall-clock time.
+</Callout>
+
+## Phase 2 — The Missing Piece: `ExecutionContext`
+
+With the real pool working, the next thing to try is `AsyncLocal<T>` — the mechanism .NET uses to flow ambient values (like a user identity, a trace ID, or a culture) across thread boundaries without passing them as explicit parameters.
+
+```csharp
+AsyncLocal<int> asyncLocalValue = new AsyncLocal<int>();
+
+for (int i = 0; i < 1000; i++)
+{
+    asyncLocalValue.Value = i;
+    MyThreadPool.QueueUserWorkItem(delegate
+    {
+        Console.WriteLine(asyncLocalValue.Value);
+        Thread.Sleep(1000);
+    });
+}
+```
+
+This looks like it should work. Set the value before queueing, read it inside the delegate. But with `MyThreadPool` every item prints **0** — the default — regardless of what `i` was.
+
+### What is `ExecutionContext`?
+
+Think of `ExecutionContext` as a **backpack** that every logical unit of work carries with it. When your code runs, .NET attaches a backpack to the current flow of execution. Anything you put into `AsyncLocal<T>` goes into that backpack.
+
+When the built-in `ThreadPool` hands work off to another thread, it photocopies the backpack and gives the copy to the worker. The worker opens its copy and finds all the values that were in the original. Neither thread shares the same backpack — mutations on one do not bleed into the other — but the values flow correctly from parent to child.
+
+Our `MyThreadPool` does not bother with the backpack at all. Worker threads start with their own empty backpack, so anything the caller packed before queueing is simply not there when the work runs.
+
+### Why `AsyncLocal` prints 0
+
+`AsyncLocal<T>` does not store its value in a field you can directly access. It stores it inside the thread's **`ExecutionContext`** — that backpack — which .NET associates with every logical flow of execution.
+
+When you write `asyncLocalValue.Value = i`, you are writing into the *current* `ExecutionContext` on the main thread. Each iteration of the loop mutates that context and queues a delegate. So far so good.
+
+The problem is what happens when a worker thread runs that delegate. Our `MyThreadPool` does this:
+
+```csharp
+Action workItem = _workItems.Take();
+workItem(); // just invokes it — no context handling at all
+```
+
+The worker thread has its own `ExecutionContext` — a fresh default one created when the thread started. When `workItem()` runs, `asyncLocalValue.Value` reads from *that thread's context*, not the main thread's context from the moment the item was queued. Default context means default value: `0`.
+
+The built-in `ThreadPool.QueueUserWorkItem` does something our version does not: at the moment of queueing it calls **`ExecutionContext.Capture()`** to snapshot the caller's ambient state, and then before invoking the work item it calls **`ExecutionContext.Run()`** to temporarily install that captured context on the worker thread. The work item runs as if it were still on the original thread, ambient values intact.
+
+```
+Built-in ThreadPool:
+  QueueUserWorkItem  →  ExecutionContext.Capture()  →  store with work item
+  Worker thread      →  ExecutionContext.Run(captured, workItem)
+
+MyThreadPool today:
+  QueueUserWorkItem  →  store work item (context ignored)
+  Worker thread      →  workItem()  ← runs in worker's own blank context
+```
+
+### Why this matters beyond the demo
+
+`AsyncLocal<T>` is not just a toy. It is the backbone of:
+
+- **`IHttpContextAccessor`** in ASP.NET Core (how `HttpContext.Current` flows across awaits)
+- **Activity / distributed tracing** (`Activity.Current`)
+- **`CancellationToken` propagation** in some patterns
+- **Security principal** (`Thread.CurrentPrincipal`)
+
+If a thread pool does not flow `ExecutionContext`, all of those break silently — you get default/null values rather than an error, which is exactly the kind of bug that shows up in production under load and is very hard to diagnose.
+
+### Fixing it: capturing and restoring `ExecutionContext`
+
+Two changes to `MyThreadPool`:
+
+1. The queue now holds a **tuple** of the work item and its captured context
+2. `QueueUserWorkItem` calls `ExecutionContext.Capture()` before adding to the queue
+3. The worker checks for a context and uses `ExecutionContext.Run` to install it before invoking
+
+```csharp
+private static readonly BlockingCollection<(Action, ExecutionContext?)> _workItems = new();
+
+public static void QueueUserWorkItem(Action work)
+{
+    _workItems.Add((work, ExecutionContext.Capture()));
+}
+```
+
+And in the worker loop:
+
+```csharp
+(Action workItem, ExecutionContext? context) = _workItems.Take();
+
+if (context == null)
+{
+    workItem();
+}
+else
+{
+    ExecutionContext.Run(context, (object? state) => ((Action)state!).Invoke(), workItem);
+}
+```
+
+`ExecutionContext.Capture()` returns `null` when the current context is the default — no ambient values have been set — so the null check avoids an unnecessary `Run` call in the common case.
+
+### Two ways to write the `Run` call — and why the uglier one wins
+
+The first instinct is to write this:
+
+```csharp
+// Simple — but allocates on every call
+ExecutionContext.Run(context, _ => workItem(), null);
+```
+
+That lambda `_ => workItem()` **closes over `workItem`** from the surrounding scope. The C# compiler implements a closure by generating a hidden class, instantiating it, and storing `workItem` in a field on that object. Every single work item execution allocates a fresh closure object on the heap.
+
+The version actually used looks noisier but avoids that entirely:
+
+```csharp
+// No closure — zero allocation
+ExecutionContext.Run(context, (object? state) => ((Action)state!).Invoke(), workItem);
+```
+
+Here `workItem` is passed as the third argument — the `state` parameter — directly to `ExecutionContext.Run`. The callback lambda `(object? state) => ((Action)state!).Invoke()` captures **nothing** from the outer scope. It only uses its own parameter. Because it closes over nothing, the compiler can hoist it to a **static cached delegate** — the same delegate instance is reused on every call, allocated exactly once for the lifetime of the program.
+
+The `state: object?` parameter on `ExecutionContext.Run` (and on many other .NET callback APIs like `Timer`, `ThreadPool.QueueUserWorkItem`, `Task.Factory.StartNew`) exists precisely for this reason. It is a deliberate escape hatch for avoiding closures in hot paths.
+
+```
+Simple lambda:    1 closure object allocated per work item  →  GC pressure
+State parameter:  0 allocations per work item               →  static delegate reused forever
+```
+
+In a thread pool processing thousands of items per second the difference is measurable. This is the same pattern Stephen uses throughout the real .NET runtime source.
+
+---
+
+## Phase 3 — Building `MyTask`
+
+The thread pool can run work. But the caller has no way to know when that work is done, whether it succeeded, or what to do next. That is what a `Task` is for.
+
+The call site has changed significantly:
+
+```csharp
+var tasks = new List<MyTask>();
+for (int i = 0; i < 100; i++)
+{
+    asyncLocalValue.Value = i;
+    tasks.Add(MyTask.Run(delegate
+    {
+        Console.WriteLine(asyncLocalValue.Value);
+        Thread.Sleep(1000);
+    }));
+}
+MyTask.WhenAll(tasks).Wait();
+```
+
+Instead of fire-and-forget, we now collect a handle for each queued item and wait for all of them to finish before the program exits. `MyTask` is that handle.
+
+### The full `MyTask` implementation
+
+```csharp
+class MyTask
+{
+    private bool _isCompleted;
+    private Exception? _exception;
+    private Action? _continuation;
+    private ExecutionContext? _context;
+
+    public bool IsCompleted
+    {
+        get { lock (this) { return _isCompleted; } }
+        private set;
+    }
+
+    private void Complete(Exception? exception)
+    {
+        lock (this)
+        {
+            if (_isCompleted) throw new InvalidOperationException("Stop messing with my code.");
+            _isCompleted = true;
+            _exception = exception;
+            if (_continuation != null)
+            {
+                if (_context != null)
+                    ExecutionContext.Run(_context, (object? state) => ((Action)state!).Invoke(), _continuation);
+                else
+                    _continuation();
+            }
+        }
+    }
+
+    public void SetResult() => Complete(null);
+    public void SetException(Exception ex) => Complete(ex);
+
+    public void Wait()
+    {
+        ManualResetEventSlim? waitHandle = null;
+        lock (this)
+        {
+            if (!_isCompleted)
+            {
+                waitHandle = new ManualResetEventSlim();
+                ContinueWith(waitHandle.Set);
+            }
+        }
+        waitHandle?.Wait();
+        if (_exception != null)
+            ExceptionDispatchInfo.Capture(_exception).Throw();
+    }
+
+    public void ContinueWith(Action continuation)
+    {
+        lock (this)
+        {
+            if (_isCompleted)
+                MyThreadPool.QueueUserWorkItem(continuation);
+            else
+            {
+                _continuation = continuation;
+                _context = ExecutionContext.Capture();
+            }
+        }
+    }
+
+    public static MyTask Run(Action action)
+    {
+        MyTask task = new MyTask();
+        MyThreadPool.QueueUserWorkItem(delegate
+        {
+            try { action(); }
+            catch (Exception ex) { task.SetException(ex); return; }
+            task.SetResult();
+        });
+        return task;
+    }
+}
+```
+
+### Anatomy of `MyTask`
+
+**The state fields**
+
+Every `MyTask` has three pieces of state that together describe the full lifecycle of a unit of work:
+
+- `_isCompleted` — has the work finished (successfully or not)?
+- `_exception` — if it failed, what was thrown?
+- `_continuation` + `_context` — what should run next, and in whose ambient context?
+
+All of it is guarded by `lock (this)`. The lock is fine-grained — it only covers the tiny state transitions, not the work itself.
+
+**`Run` — the static factory**
+
+```csharp
+public static MyTask Run(Action action)
+{
+    MyTask task = new MyTask();
+    MyThreadPool.QueueUserWorkItem(delegate
+    {
+        try { action(); }
+        catch (Exception ex) { task.SetException(ex); return; }
+        task.SetResult();
+    });
+    return task;
+}
+```
+
+`Run` creates the task, wraps the user's `action` in a try/catch, queues it on `MyThreadPool`, and returns the task immediately — before the work has run. The caller gets a handle to something that will complete in the future. This is the fundamental shape of every `Task`-returning method in .NET.
+
+**`Complete` — the single point of state transition**
+
+```csharp
+private void Complete(Exception? exception)
+{
+    lock (this)
+    {
+        if (_isCompleted) throw new InvalidOperationException("Stop messing with my code.");
+        _isCompleted = true;
+        _exception = exception;
+        if (_continuation != null) { /* run it with context */ }
+    }
+}
+```
+
+`Complete` is called exactly once — either from `SetResult` (success) or `SetException` (failure). The guard at the top makes double-completion a hard crash rather than silent data corruption. Once `_isCompleted` is set, `_continuation` is fired if one has been registered. The lock ensures that `ContinueWith` and `Complete` racing on different threads always see a consistent view of the state.
+
+**`ContinueWith` — handling the race, now returning `MyTask`**
+
+`ContinueWith` was upgraded from `void` to returning a new `MyTask`. That one change makes the whole API composable.
+
+```csharp
+public MyTask ContinueWith(Action continuation)
+{
+    MyTask task = new MyTask();
+    Action callBack = () =>
+    {
+        try
+        {
+            continuation();
+            task.SetResult();
+        }
+        catch (Exception ex)
+        {
+            task.SetException(ex);
+        }
+    };
+    lock (this)
+    {
+        if (_isCompleted)
+            MyThreadPool.QueueUserWorkItem(callBack);
+        else
+        {
+            _continuation = callBack;
+            _context = ExecutionContext.Capture();
+        }
+    }
+    return task;
+}
+```
+
+The original `continuation` is now wrapped in a `callBack` that also owns a new `MyTask`. When the callback runs, it invokes the continuation, and then — whether it succeeds or throws — calls `SetResult` or `SetException` on that inner task. The inner task is what gets returned to the caller.
+
+This means continuations can now be **chained**:
+
+```csharp
+someTask
+    .ContinueWith(() => DoStepOne())
+    .ContinueWith(() => DoStepTwo())
+    .Wait();
+```
+
+Each `.ContinueWith` returns a task representing the completion of *that specific step*, and you can keep attaching more steps to it. This is the direct mechanical ancestor of `await` — each `await` in a compiled async method is roughly a `ContinueWith` registered on the awaited task.
+
+The race handling — already completed vs not yet complete — is unchanged:
+
+- Task already done → queue the callback immediately
+- Task not done → store it; `Complete` will fire it later
+
+The `ExecutionContext` is still captured at registration time, so the continuation runs in the ambient context of the caller, not of the worker that happened to complete the task.
+
+**`Wait` — blocking the caller without spinning**
+
+```csharp
+public void Wait()
+{
+    ManualResetEventSlim? waitHandle = null;
+    lock (this)
+    {
+        if (!_isCompleted)
+        {
+            waitHandle = new ManualResetEventSlim();
+            ContinueWith(waitHandle.Set);
+        }
+    }
+    waitHandle?.Wait();
+    if (_exception != null)
+        ExceptionDispatchInfo.Capture(_exception).Throw();
+}
+```
+
+`Wait` does not spin. It creates a `ManualResetEventSlim` — a lightweight OS wait primitive — and registers `waitHandle.Set` as the continuation. When the task completes, the continuation fires and sets the event. The calling thread wakes up. If the task was already complete when `Wait` was called, `waitHandle` stays null and the `?.Wait()` is a no-op.
+
+### Three ways to rethrow — and why `ExceptionDispatchInfo` wins
+
+When a task fails and the caller calls `Wait()`, the exception needs to surface. Three options are visible as comments in the code:
+
+```csharp
+// Option 1 — wraps in a new exception, losing the original stack trace
+throw new Exception("Task failed.", _exception);
+
+// Option 2 — wraps in AggregateException (what the real Task does for Wait())
+throw new AggregateException(_exception);
+
+// Option 3 — rethrows preserving the full original stack trace
+ExceptionDispatchInfo.Capture(_exception).Throw();
+```
+
+Option 1 is the worst: you get a new exception whose stack trace points at `Wait()`, not at the line that actually failed. The original trace is buried in `InnerException`.
+
+Option 2 is what the real `Task.Wait()` does — it wraps in `AggregateException` to allow multiple exceptions from parallel tasks. Correct but verbose to unwrap when there is only one.
+
+Option 3 — `ExceptionDispatchInfo` — captures the exception *with its original stack trace* and rethrows it as-is. The exception that surfaces from `Wait()` looks exactly like it was thrown directly from the failing code. This is the right choice for a single-task scenario and is the same mechanism `await` uses internally to propagate exceptions across thread boundaries.
+
+### `Delay` — asynchrony without a thread
+
+With chaining in place, the new call site demonstrates a sequence of three async steps, each waiting 2 seconds:
+
+```csharp
+Console.WriteLine("Hello, ");
+MyTask.Delay(2000).ContinueWith(delegate
+{
+    Console.WriteLine("World!");
+    return MyTask.Delay(2000).ContinueWith(delegate
+    {
+        Console.WriteLine("World!");
+        return MyTask.Delay(2000).ContinueWith(delegate
+        {
+            Console.WriteLine("World!");
+        });
+    });
+})
+.Wait();
+```
+
+Run this and "Hello, " prints immediately. Then "World!" appears three times, each separated by 2 seconds. The single `.Wait()` on the outermost task does not return until the innermost callback has finished. No thread is blocked during any of those delays.
+
+The pyramid shape is intentional — it is showing the problem that `async`/`await` was invented to solve. More on that shortly.
+
+```csharp
+public static MyTask Delay(long delay)
+{
+    MyTask task = new MyTask();
+    new Timer(_ => task.SetResult(), null, delay, Timeout.Infinite);
+    return task;
+}
+```
+
+`Delay` creates a task, arms an OS `Timer` to call `task.SetResult()` after `delay` milliseconds, and returns the task immediately. The `Timeout.Infinite` period means the timer fires exactly once and never repeats.
+
+**Why this is significant**
+
+Every previous example used `Thread.Sleep`, which *blocks* the calling thread for the duration. A blocked thread still exists, still occupies its stack, still counts against the pool's available threads, and does zero useful work.
+
+`Delay` does none of that. There is no thread waiting. The OS timer is a kernel facility — a tiny data structure registered with the scheduler. When the delay expires, the kernel fires a callback, `SetResult()` is called, and `ContinueWith`'s callback gets queued onto `MyThreadPool`. Only then is a thread used — and only for the instant it takes to run the continuation.
+
+```
+Thread.Sleep(2000):   thread occupied for 2 full seconds — blocked, wasted
+MyTask.Delay(2000):   thread used for ~microseconds to run the continuation
+                       — 2 seconds spent in the OS kernel, not in your pool
+```
+
+This is what people mean when they say `async`/`await` is about freeing threads for I/O. Real I/O (network, disk) works the same way — the OS drives the operation and fires a callback when it completes. `Delay` is a clean minimal demonstration of that pattern.
+
+The call chain makes it explicit:
+
+```
+Delay(2000)             → returns a task (not yet complete)
+.ContinueWith(...)      → registers "World!" to print when timer fires; returns a new task
+.Wait()                 → parks main thread until "World!" has been printed and its task is complete
+```
+
+Three tasks in flight, zero threads blocked during the 2-second wait.
+
+### `ContinueWith(Func<MyTask>)` — task unwrapping
+
+For the nested call site to work correctly, `ContinueWith` needed a second overload. The first overload takes `Action` — a continuation that does synchronous work and returns nothing. But what if the continuation itself starts an async operation and returns a `MyTask`?
+
+With only the `Action` overload, the outer task completes the moment the continuation *returns* — which for an async inner task is immediately, before the inner task has actually finished. The outer `.Wait()` would return too early.
+
+The fix is a second overload that takes `Func<MyTask>`:
+
+```csharp
+public MyTask ContinueWith(Func<MyTask> continuation)
+{
+    MyTask task = new MyTask();
+    Action callBack = () =>
+    {
+        try
+        {
+            MyTask nextTask = continuation();
+            nextTask.ContinueWith(() =>
+            {
+                if (nextTask._exception != null)
+                    task.SetException(nextTask._exception);
+                else
+                    task.SetResult();
+            });
+        }
+        catch (Exception ex)
+        {
+            task.SetException(ex);
+        }
+    };
+    lock (this)
+    {
+        if (_isCompleted)
+            MyThreadPool.QueueUserWorkItem(callBack);
+        else
+        {
+            _continuation = callBack;
+            _context = ExecutionContext.Capture();
+        }
+    }
+    return task;
+}
+```
+
+The key difference is in the `callBack` body. Instead of calling `task.SetResult()` immediately after the continuation runs, it:
+
+1. Calls the continuation and receives the `nextTask` it returned
+2. Attaches *another* `ContinueWith` onto `nextTask`
+3. Only calls `task.SetResult()` when `nextTask` itself completes
+
+The outer `task` — the one returned to the caller — is now **unwrapped**: it does not complete until the entire inner chain has resolved. This is called **task unwrapping**, and it is the mechanism that makes sequential async operations compose correctly.
+
+**How the pyramid chains through**
+
+```
+Delay(2000) completes
+  → outer ContinueWith fires
+      → prints "World!"
+      → starts Delay(2000), returns its ContinueWith task
+          → outer task waits for that inner task
+              → inner Delay(2000) completes
+                  → middle ContinueWith fires
+                      → prints "World!"
+                      → starts Delay(2000), returns its ContinueWith task
+                          → ...and so on
+```
+
+The single `.Wait()` at the top parks the main thread. Each level of the pyramid propagates completion upward only when everything beneath it is done.
+
+**This is callback hell — and it is exactly what `async`/`await` was designed to erase**
+
+The code works perfectly. But look at the shape: every new async step requires another level of indentation. In real code with error handling, branching, and loops, this nesting becomes unreadable fast. This is the "pyramid of doom" that plagued JavaScript before `async`/`await` arrived there too.
+
+The C# compiler's `async`/`await` transformation takes code written as flat sequential steps:
+
+```csharp
+Console.WriteLine("Hello, ");
+await MyTask.Delay(2000);
+Console.WriteLine("World!");
+await MyTask.Delay(2000);
+Console.WriteLine("World!");
+await MyTask.Delay(2000);
+Console.WriteLine("World!");
+```
+
+...and mechanically rewrites it into exactly the kind of `ContinueWith` chain we just wrote by hand. Same runtime behaviour, none of the nesting. The pyramid is hidden in the compiler output — what you write is flat.
+
+### `WhenAll` — waiting for everything at once
+
+The original call site waited for tasks one by one in a `foreach` loop. The new version replaces that with:
+
+```csharp
+MyTask.WhenAll(tasks).Wait();
+```
+
+`WhenAll` returns a new `MyTask` that completes only when every task in the list has completed. Here is the implementation:
+
+```csharp
+public static MyTask WhenAll(List<MyTask> tasks)
+{
+    MyTask allDone = new MyTask();
+
+    int count = tasks.Count;
+    if (count == 0)
+    {
+        allDone.SetResult();
+        return allDone;
+    }
+
+    Action continuation = () =>
+    {
+        if (Interlocked.Decrement(ref count) == 0)
+            allDone.SetResult();
+    };
+
+    foreach (MyTask task in tasks)
+        task.ContinueWith(continuation);
+
+    return allDone;
+}
+```
+
+**The shared counter trick**
+
+The heart of `WhenAll` is a single `int count` initialised to the number of tasks. The same `continuation` delegate is registered on every task. When a task completes it calls its continuation, which atomically decrements `count` with `Interlocked.Decrement`. The thread that brings `count` to exactly zero is the one that calls `allDone.SetResult()` — completing the umbrella task and unblocking the caller's `Wait()`.
+
+`Interlocked.Decrement` is the right tool here for the same reason `ConcurrentQueue` uses CAS: it performs the decrement and the comparison atomically in a single CPU instruction. There is no window where two threads could both see `count == 0`. Exactly one thread wins, exactly once.
+
+**One delegate, many registrations**
+
+Notice that the same `continuation` object is passed to `ContinueWith` for every task. There is only one closure allocated for the entire `WhenAll` call, regardless of how many tasks are in the list. The `count` variable is captured once and shared across all invocations through that single closure.
+
+**`count` is a local copy, not `tasks.Count`**
+
+```csharp
+int count = tasks.Count;
+```
+
+This local copy is important. The lambda captures `count` — the local `int` — not `tasks.Count`. `Interlocked.Decrement(ref count)` modifies this local via a managed reference. If you called `WhenAll` twice concurrently, each call would have its own independent `count`, so they would never interfere with each other.
+
+**Why `WhenAll` is better than sequential `Wait()` calls**
+
+The old pattern:
+```csharp
+foreach (var task in tasks)
+    task.Wait();  // blocks until this specific task finishes, then moves to next
+```
+
+This works correctly, but it observes completions in list order — if task 50 finishes first you still block on tasks 0 through 49 before you get to it. `WhenAll` removes that ordering constraint entirely. The main thread parks once and wakes up the instant the last task finishes, regardless of which task that is.
+
+---
+
+## Phase 4 — `Iterate` + `yield`: The Bridge to `async`/`await`
+
+Every phase so far has been building toward this moment. The call site is now:
+
+```csharp
+MyTask.Iterate(PrintAsync()).Wait();
+
+static IEnumerable<MyTask> PrintAsync()
+{
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine(i);
+        yield return MyTask.Delay(1000);
+    }
+}
+```
+
+Run it and you see 0 through 4 printed, one per second, with no thread blocked between them. But look at `PrintAsync` — it reads like synchronous sequential code. There are no callbacks, no nesting, no pyramid. Yet it is fully asynchronous.
+
+This is `async`/`await` — just spelled differently.
+
+### What `yield return` actually does
+
+`yield return` turns a method into a **state machine**. The C# compiler rewrites `PrintAsync` behind the scenes into a class with a `MoveNext()` method that advances through the body one `yield` at a time. When you call `PrintAsync()`, you do not run any of the body — you get back an `IEnumerable<MyTask>` object. Only when you call `MoveNext()` on its enumerator does the body run — up to the first `yield return`, where it pauses and hands back the yielded value.
+
+Call `MoveNext()` again and it resumes from where it left off, runs to the next `yield return`, and pauses again. When the body falls off the end, `MoveNext()` returns `false`.
+
+```
+MoveNext() call 1:  runs body → prints 0 → yields Delay(1000) → pauses
+MoveNext() call 2:  resumes  → prints 1 → yields Delay(1000) → pauses
+...
+MoveNext() call 5:  resumes  → prints 4 → yields Delay(1000) → pauses
+MoveNext() call 6:  resumes  → loop ends → returns false
+```
+
+The state machine remembers where it was — the loop variable `i`, the current position — between calls. That saved state is the **continuation** of the computation.
+
+### `Iterate` — the scheduler
+
+`Iterate` is what drives the state machine forward, but crucially, it only advances to the next step *when the previously yielded task has completed*:
+
+```csharp
+public static MyTask Iterate(IEnumerable<MyTask> tasks)
+{
+    MyTask task = new MyTask();
+    IEnumerator<MyTask> enumerator = tasks.GetEnumerator();
+
+    void MoveNext()
+    {
+        try
+        {
+            while (enumerator.MoveNext())
+            {
+                MyTask next = enumerator.Current;
+                if (next.IsCompleted)
+                {
+                    next.Wait();   // already done — propagate any exception, keep looping
+                    continue;
+                }
+                next.ContinueWith(MoveNext);  // not done — come back when it is
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            task.SetException(e);
+            return;
+        }
+        task.SetResult();
+    }
+
+    MoveNext();
+    return task;
+}
+```
+
+The local function `MoveNext` closes over both `enumerator` and `task`, and — critically — **refers to itself**. Here is how it plays out:
+
+1. `MoveNext()` is called. It calls `enumerator.MoveNext()`, which runs `PrintAsync` up to the first `yield return MyTask.Delay(1000)`.
+2. `enumerator.Current` is the `Delay` task. It is not yet complete.
+3. `next.ContinueWith(MoveNext)` registers `MoveNext` itself as the continuation — "when this delay finishes, call me again".
+4. `return` — the current thread is released. No thread is blocked.
+5. One second later the OS timer fires, `Delay`'s task completes, and `MoveNext` is called again from the thread pool.
+6. `enumerator.MoveNext()` runs `PrintAsync` from where it was paused — prints the next number, `yield return`s the next delay.
+7. Repeat until the loop in `PrintAsync` ends.
+8. `enumerator.MoveNext()` returns `false`, the `while` exits, `task.SetResult()` completes the outer task.
+9. `.Wait()` on the main thread unblocks.
+
+**The `while` + `continue` fast path**
+
+If a yielded task is already complete when `MoveNext` inspects it, there is no need to schedule a callback — just call `next.Wait()` (to surface any exception), `continue` the loop, and proceed to the next step synchronously. This avoids unnecessary thread pool round-trips when steps complete instantaneously.
+
+**Exception propagation**
+
+If `PrintAsync` throws (or if `next.Wait()` rethrows from a failed task), the `catch` in `MoveNext` captures it into `task.SetException`. The caller's `.Wait()` then rethrows it with the original stack trace preserved via `ExceptionDispatchInfo`.
+
+### The mapping to `async`/`await`
+
+Compare `PrintAsync` written two ways:
+
+```csharp
+// With yield — what we just built
+static IEnumerable<MyTask> PrintAsync()
+{
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine(i);
+        yield return MyTask.Delay(1000);
+    }
+}
+
+// With await — what you write every day
+static async Task PrintAsync()
+{
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine(i);
+        await Task.Delay(1000);
+    }
+}
+```
+
+The bodies are structurally identical. `yield return` ↔ `await`. `IEnumerable<MyTask>` ↔ `Task`. `Iterate` ↔ the runtime's async state machine driver.
+
+When the C# compiler sees `async`/`await`, it does exactly what we did manually — and we are about to prove it by making our own `MyTask` a first-class `async`-returnable type.
+
+---
+
+## Phase 5 — Making `MyTask` a Real Awaitable
+
+The `yield`/`Iterate` version showed the *shape* of `async`/`await`. Now we wire up the actual C# compiler protocol so `MyTask` works with the real `async` and `await` keywords directly.
+
+The final call site:
+
+```csharp
+PrintAsync().Wait();
+
+static async MyTask PrintAsync()
+{
+    for (int i = 0; i < 5; i++)
+    {
+        Console.WriteLine(i);
+        await MyTask.Delay(1000);
+    }
+}
+```
+
+`async MyTask` — not `async Task`. Our type. Our keywords. One second between each number, no blocked thread.
+
+Two things had to be added to make this work: an **Awaiter** (so `await myTask` compiles) and an **AsyncMethodBuilder** (so `async MyTask` compiles).
+
+### The Awaiter — making `await myTask` work
+
+For `await` to work on a type, the compiler looks for a `GetAwaiter()` method that returns something implementing `INotifyCompletion` with `IsCompleted` and `GetResult()`. We add that as a nested struct on `MyTask`:
+
+```csharp
+public struct Awaiter(MyTask task) : INotifyCompletion
+{
+    public Awaiter GetAwaiter() => this;
+    public bool IsCompleted => task.IsCompleted;
+    public void OnCompleted(Action continuation) => task.ContinueWith(continuation);
+    public void GetResult() => task.Wait();
+}
+
+public Awaiter GetAwaiter() => new Awaiter(this);
+```
+
+Each member has a specific job the compiler calls at a specific moment:
+
+**`IsCompleted`** — checked immediately when `await` is reached. If `true`, the compiler skips scheduling and continues inline. This is the fast path for already-completed tasks.
+
+**`OnCompleted(Action continuation)`** — called when `IsCompleted` is `false`. The compiler passes the rest of the async method as an `Action` (the state machine's `MoveNext`). We hand it straight to `ContinueWith` — which is exactly the mechanism we built in Phase 3.
+
+**`GetResult()`** — called after the task completes to retrieve the result (or rethrow any exception). We delegate to `Wait()`, which uses `ExceptionDispatchInfo` to preserve the original stack trace.
+
+The struct is a **primary constructor** struct — `Awaiter(MyTask task)` captures `task` as a parameter and all members refer to it directly, with no boilerplate field declaration needed.
+
+### The AsyncMethodBuilder — making `async MyTask` work
+
+For `async MyTask` to be a valid return type, the compiler needs a *builder* — a class that creates and drives the `MyTask` that the method returns. We tell the compiler which builder to use with an attribute:
+
+```csharp
+[AsyncMethodBuilder(typeof(MyTaskMethodBuilder))]
+class MyTask { ... }
+```
+
+Then we implement the builder:
+
+```csharp
+class MyTaskMethodBuilder
+{
+    public MyTask Task { get; } = new MyTask();
+
+    public static MyTaskMethodBuilder Create() => new MyTaskMethodBuilder();
+
+    public void Start<TStateMachine>(ref TStateMachine stateMachine)
+        where TStateMachine : IAsyncStateMachine
+        => stateMachine.MoveNext();
+
+    public void SetResult() => Task.SetResult();
+    public void SetException(Exception ex) => Task.SetException(ex);
+    public void SetStateMachine(IAsyncStateMachine stateMachine) { }
+
+    public void AwaitOnCompleted<TAwaiter, TStateMachine>(
+        ref TAwaiter awaiter, ref TStateMachine stateMachine)
+        where TAwaiter : INotifyCompletion
+        where TStateMachine : IAsyncStateMachine
+        => awaiter.OnCompleted(stateMachine.MoveNext);
+
+    public void AwaitUnsafeOnCompleted<TAwaiter, TStateMachine>(
+        ref TAwaiter awaiter, ref TStateMachine stateMachine)
+        where TAwaiter : ICriticalNotifyCompletion
+        where TStateMachine : IAsyncStateMachine
+        => awaiter.OnCompleted(stateMachine.MoveNext);
+}
+```
+
+The compiler calls these methods at precise moments in the async method's lifecycle:
+
+**`Create()`** — called once when the async method is invoked. Returns a fresh builder that owns a fresh `MyTask`.
+
+**`Start(ref stateMachine)`** — called immediately after `Create`. The compiler has already built its state machine object; `Start` kicks it off by calling `stateMachine.MoveNext()` for the first time. This runs the body up to the first `await`.
+
+**`AwaitOnCompleted` / `AwaitUnsafeOnCompleted`** — called when the state machine hits an `await` on an incomplete task. The compiler passes both the awaiter and the state machine. We register `stateMachine.MoveNext` as the continuation on the awaiter — so when the awaited task completes, the state machine resumes exactly where it paused. This is `Iterate`'s `next.ContinueWith(MoveNext)`, expressed as a generic protocol.
+
+**`SetResult()` / `SetException()`** — called when the state machine runs to completion or throws. We forward directly to `Task.SetResult()` / `Task.SetException()` — the same primitives we built in Phase 3.
+
+**`SetStateMachine()`** — a hook for optimising the state machine's heap allocation. We leave it empty; the runtime handles it.
+
+**`Task` property** — the compiler calls this at the very end to get the `MyTask` to return to the caller. It is the same `MyTask` we created in `Create()` and have been completing via `SetResult`/`SetException`.
+
+### The complete picture
+
+Every piece built in this walkthrough clicks into place:
+
+```
+async MyTask PrintAsync()
+│
+├─ Compiler generates a state machine struct (like yield)
+│
+├─ MyTaskMethodBuilder.Create()        → creates the MyTask to return
+├─ MyTaskMethodBuilder.Start()         → calls stateMachine.MoveNext() #1
+│   └─ body runs → hits await MyTask.Delay(1000)
+│       ├─ Awaiter.IsCompleted → false
+│       └─ AwaitOnCompleted() → awaiter.OnCompleted(stateMachine.MoveNext)
+│           └─ MyTask.ContinueWith(MoveNext)   ← Phase 3
+│               └─ stored, thread released
+│
+├─ [1 second passes — OS timer fires]
+│   └─ MyTask.Complete() → fires continuation → MoveNext() called again
+│       └─ body resumes → loop → hits next await → same flow
+│
+└─ body falls off the end
+    └─ MyTaskMethodBuilder.SetResult() → MyTask.SetResult()
+        └─ PrintAsync()'s task completes → .Wait() on main thread unblocks
+```
+
+<Callout type="info">
+`async`/`await` is not magic. It is a compiler transformation into a state machine, driven by a builder protocol, using the same `ContinueWith` and `ExecutionContext` machinery we built entirely from scratch. The keywords are syntax — the substance is what we built.
+</Callout>
+
+---
+
+## Where We Ended Up
+
+Starting from a bare `for` loop and `ThreadPool.QueueUserWorkItem`, we built every layer of the .NET async stack:
+
+| What we built | What it maps to |
+|---|---|
+| `MyThreadPool` | `System.Threading.ThreadPool` |
+| `ExecutionContext` capture + `Run` | Ambient state flowing across threads |
+| `MyTask` + `ContinueWith` | `System.Threading.Tasks.Task` |
+| `MyTask.Delay` | `Task.Delay` |
+| `MyTask.WhenAll` | `Task.WhenAll` |
+| `Iterate` + `yield` | The compiler's async state machine |
+| `Awaiter` + `AsyncMethodBuilder` | The `await`/`async` compiler protocol |
+
+The `async`/`await` you write every day is this stack, with the last two rows handled invisibly by the compiler. Every `await` is a `ContinueWith`. Every `async` method is a state machine with a `MoveNext`. Every thread pool work item carries an `ExecutionContext` backpack. None of it is magic — it is mechanisms, and now you have built them all.
+
+---
+
+*Based on the [Deep .NET YouTube session](https://www.youtube.com/watch?v=R-z2Hv-7nxk) with Stephen Toub and Scott Hanselman.*
