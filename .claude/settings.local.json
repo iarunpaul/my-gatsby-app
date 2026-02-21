@@ -32,7 +32,10 @@
       "Bash(dir /s /b *.md 2)",
       "Bash(nul)",
       "Bash(netstat:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

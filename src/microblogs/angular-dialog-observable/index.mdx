@@ -1,0 +1,88 @@
+---
+title: "Wrapping Angular Dialog Callbacks in an Observable"
+description: "Use a RxJS Subject as an event bus and bridge imperative dialog callbacks into a clean Observable stream."
+date: "2026-02-20"
+tags: ["angular", "rxjs", "observable", "typescript", "patterns"]
+slug: "angular-dialog-observable"
+---
+
+When you trigger a dialog — an email composer, a confirmation modal, a file picker — you eventually need to know what the user did. Did they confirm? Cancel? The imperative approach passes callbacks directly. The reactive approach wraps the whole thing in an `Observable<boolean>` and lets you `.subscribe()` to the result like any other stream.
+
+Here's the pattern in two parts.
+
+## Part 1 — The payload carries its own callbacks
+
+Instead of wiring up event emitters or service methods, embed the resolution functions directly in the payload object you dispatch:
+
+```ts
+interface EmailPayload {
+  data: { subject: string; to: string[]; body: string; /* ... */ };
+  onMailSent?: () => void;
+  onMailTextDialogClose?: () => void;
+}
+```
+
+The dialog doesn't know who opened it. It just calls `payload.onMailSent()` or `payload.onMailTextDialogClose()` when the user acts. This keeps the dialog component completely decoupled.
+
+## Part 2 — Bridge callbacks to an Observable at the call site
+
+The trick is `new Observable(observer => { ... })`. Inside its setup function you control exactly when it emits and when it completes — which means you can hand those controls off to callbacks:
+
+```ts
+listenToEmailDialogResult(payload: EmailPayload): Observable<boolean> {
+  return new Observable<boolean>(observer => {
+    this.dispatchEmailEvent({
+      ...payload,
+      onMailSent: () => {
+        observer.next(true);
+        observer.complete();
+      },
+      onMailTextDialogClose: () => {
+        observer.next(false);
+        observer.complete();
+      }
+    });
+  });
+}
+```
+
+Now the caller just does:
+
+```ts
+this.listenToEmailDialogResult(payload).subscribe(wasSent => {
+  this.toastMessage = wasSent ? '✅ Email sent!' : '❌ Email closed';
+});
+```
+
+One subscribe, one value, automatic completion. No manual cleanup needed.
+
+## The Subject as an event bus
+
+A `Subject<EmailPayload>` acts as the in-component message bus. The constructor subscribes once to it and updates `showDialog` and `dialogPayload` whenever a new payload arrives. This decouples dispatch (`emailBus.next(payload)`) from presentation logic cleanly.
+
+```ts
+private emailBus = new Subject<EmailPayload>();
+
+constructor() {
+  this.emailBus.subscribe(payload => {
+    this.dialogPayload = payload;
+    this.showDialog = true;
+  });
+}
+```
+
+## When is this useful?
+
+This pattern is especially useful when:
+
+- A **parent or sibling component** needs to open a shared dialog and await its result
+- You want to **chain dialog results** with other RxJS operators like `switchMap`, `filter`, or `catchError`
+- The dialog is a **dumb component** that shouldn't know about services or routing
+
+The `new Observable` constructor is often underused. Whenever you have a third-party callback API — timers, DOM events, dialog results — wrapping it this way gives you the full power of the RxJS operator chain without any coupling to the internals.
+
+## Try it live
+
+The full working example — component, template, and dialog flow — is runnable on StackBlitz:
+
+[**Open on StackBlitz →**](https://stackblitz.com/edit/stackblitz-starters-ntupfro3)

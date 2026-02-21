@@ -42,8 +42,15 @@ module.exports = {
     {
       resolve: `gatsby-source-filesystem`,
       options: {
+        name: `blogs`,
+        path: `${__dirname}/src/blogs`,
+      },
+    },
+    {
+      resolve: `gatsby-source-filesystem`,
+      options: {
         name: `microblogs`,
-        path: `${__dirname}/src/microblogs`, // Add microblogs folder
+        path: `${__dirname}/src/microblogs`,
       },
     },
     `gatsby-transformer-remark`, // Add Markdown support for microblogs

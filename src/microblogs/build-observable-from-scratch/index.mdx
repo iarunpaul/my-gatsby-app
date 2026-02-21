@@ -1,0 +1,82 @@
+---
+title: "Building an Observable from Scratch"
+description: "Strip away the RxJS magic and build an Observable step by step — from a plain async function to something with a .subscribe() method."
+date: "2026-02-21"
+tags: ["rxjs", "javascript", "observable", "fundamentals"]
+slug: "build-observable-from-scratch"
+---
+
+An RxJS `Observable` can feel like a black box. It isn't. At its core it's just a **function that produces a value asynchronously** — and you hand it a callback to receive that value. Let's build one from nothing.
+
+## Step 1 — It starts as a plain function
+
+```js
+function myObservable() {
+  fetch("https://zenquotes.io/api/random")
+    .then(res => res.json())
+    .then(value => console.log(value));
+}
+
+myObservable();
+```
+
+A function. Calls an API. Produces a value sometime in the future. That delayed, async production of a value is the entire concept behind an Observable.
+
+The problem: the value is locked inside `console.log`. Nothing else can consume it.
+
+## Step 2 — Pass in an observer
+
+Fix it by accepting a callback — the observer — and calling it with the value:
+
+```js
+function myObservable(observer) {
+  fetch("https://zenquotes.io/api/random")
+    .then(res => res.json())
+    .then(value => observer(value));
+}
+
+myObservable(value => {
+  console.log("Received:", value);
+});
+```
+
+Now the caller controls what happens with the data. This is the observer pattern: the **Observable produces**, the **observer consumes**.
+
+## Step 3 — Add a `.subscribe()` method
+
+RxJS Observables are created first, subscribed to later. Separate those two steps by returning an object with a `subscribe` method:
+
+```js
+function createObservable(producerFn) {
+  return {
+    subscribe: (observer) => producerFn(observer)
+  };
+}
+
+const quote$ = createObservable(observer => {
+  fetch("https://zenquotes.io/api/random")
+    .then(res => res.json())
+    .then(value => observer(value));
+});
+
+quote$.subscribe(value => console.log("Received:", value));
+```
+
+`createObservable` takes the producer logic and wraps it. Calling `.subscribe()` executes that logic and wires up the observer. This is exactly how `new Observable(subscribeFn)` works in RxJS.
+
+## Step 4 — Multiple independent subscriptions
+
+Each `.subscribe()` call runs the producer function independently:
+
+```js
+quote$.subscribe(value => console.log("Observer 1:", value));
+quote$.subscribe(value => console.log("Observer 2:", value));
+```
+
+Two fetches. Two independent streams. This is why Observables are called **cold** by default — the work doesn't start until someone subscribes.
+
+---
+
+That's the mental model. RxJS builds on top of exactly this shape — adding `next`, `error`, `complete` on the observer, teardown logic, and the operator chain — but the foundation is just a function you call with a callback.
+
+> Source code for this walkthrough: [**View on GitHub →**](https://github.com/iarunpaul/ObservableSimplified)
