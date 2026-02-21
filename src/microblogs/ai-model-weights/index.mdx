@@ -1,0 +1,63 @@
+---
+title: "What Are Model Weights?"
+date: "2026-02-21"
+slug: "ai-model-weights"
+description: "A plain-English explanation of what 'weights' mean in AI models like GPT."
+tags: ["AI", "LLMs", "Machine Learning", "Foundations"]
+---
+
+**Weights** are the learned numbers inside a neural network that determine how the model behaves.
+
+A model is made of:
+- A fixed **architecture** (layers + math)
+- Plus **weights** (millions or billions of numbers)
+
+The architecture stays the same.  
+Learning happens by **changing the weights**.
+
+---
+
+### Think of it like this
+
+- Architecture → brain structure  
+- Weights → synapse strengths  
+- Training → learning
+
+You don’t change the brain’s shape when you learn — you change the connections.
+
+---
+
+### Why weights matter
+
+Same architecture, different weights → **different model**
+
+That’s why companies like OpenAI don’t release weights:  
+**the weights *are* the intelligence**.
+
+---
+
+### Training vs fine-tuning
+
+- **Training**: start with random weights, learn everything  
+- **Fine-tuning**: start with pre-trained weights, adjust them slightly
+
+Fine-tuning = **small weight updates**
+
+---
+
+### Practical rule
+
+> If you can download the weights, it’s your model.  
+> If you can’t, you’re using someone else’s intelligence via an API.
+
+---
+
+### RAG note
+
+RAG doesn’t change weights.  
+It adds knowledge **outside** the model.
+
+---
+
+**TL;DR**  
+Weights are the numbers that encode everything an AI model “knows” and “how it thinks”.
