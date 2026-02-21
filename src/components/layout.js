@@ -19,11 +19,17 @@ const Layout = ({ pageTitle, children }) => {
 
   // Handle scroll effect for navigation
   useEffect(() => {
+    const getScrollY = () =>
+      window.scrollY ?? window.pageYOffset ?? document.documentElement.scrollTop ?? 0;
+
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 50);
+      setIsScrolled(getScrollY() > 50);
     };
 
-    window.addEventListener('scroll', handleScroll);
+    // Set correct state immediately on mount (handles back-navigation mid-page)
+    handleScroll();
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -35,9 +41,9 @@ const Layout = ({ pageTitle, children }) => {
     <div className="min-h-screen bg-gray-50">
       {/* Modern Navigation Header */}
       <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled 
-          ? 'bg-white/95 backdrop-blur-md shadow-lg border-b border-gray-200' 
-          : 'bg-transparent'
+        isScrolled
+          ? 'bg-white/95 backdrop-blur-md shadow-lg border-b border-gray-200'
+          : 'bg-gray-900/60 backdrop-blur-md border-b border-white/10'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -50,12 +56,12 @@ const Layout = ({ pageTitle, children }) => {
                 </div>
                 <div className="hidden sm:block">
                   <span className={`font-bold text-xl transition-colors duration-300 ${
-                    isScrolled ? 'text-gray-900' : 'text-gray-500'
+                    isScrolled ? 'text-gray-900' : 'text-white'
                   }`}>
                     Tech Hub
                   </span>
                   <div className={`text-xs transition-colors duration-300 ${
-                    isScrolled ? 'text-gray-500' : 'text-gray-300'
+                    isScrolled ? 'text-gray-500' : 'text-white/60'
                   }`}>
                     Innovation & Architecture
                   </div>
@@ -303,7 +309,7 @@ const NavLink = ({ to, children, isScrolled, isActive }) => (
           : 'bg-white/20 text-white'
         : isScrolled
         ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-        : 'text-gray-300 hover:text-white hover:bg-white/10'
+        : 'text-white/80 hover:text-white hover:bg-white/10'
     }`}
   >
     {children}
@@ -318,7 +324,7 @@ const ExternalNavLink = ({ href, children, isScrolled }) => (
     className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center ${
       isScrolled
         ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-        : 'text-gray-300 hover:text-white hover:bg-white/10'
+        : 'text-white/80 hover:text-white hover:bg-white/10'
     }`}
   >
     {children}

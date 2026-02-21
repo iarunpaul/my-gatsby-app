@@ -50,18 +50,22 @@ const IndexPage = ({ data }) => {
         </div>
         
         {/* Scroll indicator */}
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce">
+        <button
+          onClick={() => document.getElementById('main-content').scrollIntoView({ behavior: 'smooth' })}
+          aria-label="Scroll to content"
+          className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce cursor-pointer bg-transparent border-0 p-0 hover:opacity-70 transition-opacity duration-200"
+        >
           <div className="w-6 h-10 border-2 border-white rounded-full flex justify-center">
             <div className="w-1 h-3 bg-white rounded-full mt-2 animate-pulse"></div>
           </div>
-        </div>
+        </button>
       </section>
 
       {/* MicroBlog strip */}
       <MicroblogPane posts={microblogPosts} />
 
       {/* AI-Powered LinkedIn Activity Section */}
-      <section className="py-20 bg-gray-50">
+      <section id="main-content" className="py-20 bg-gray-50">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center mb-12">
             <h2 className="text-4xl font-bold text-gray-900 mb-4">

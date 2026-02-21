@@ -4,12 +4,16 @@ import { Link } from "gatsby"
 const MicroblogPane = ({ posts }) => {
   if (!posts || posts.length === 0) return null
 
+  // Duplicate posts so the marquee loops seamlessly (track = 2× content width,
+  // animation moves -50% which is exactly one copy's width)
+  const doubled = [...posts, ...posts]
+
   return (
     <section className="bg-gray-900 border-b border-gray-700 py-3">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex items-center gap-4">
 
-          {/* Label */}
+          {/* Fixed label */}
           <Link
             to="/microblog"
             className="text-blue-400 font-semibold text-xs uppercase tracking-widest whitespace-nowrap flex items-center gap-1.5 flex-shrink-0 hover:text-blue-300 transition-colors"
@@ -20,25 +24,27 @@ const MicroblogPane = ({ posts }) => {
             MicroBlogs
           </Link>
 
-          {/* Divider */}
+          {/* Fixed divider */}
           <div className="w-px h-5 bg-gray-600 flex-shrink-0" />
 
-          {/* Scrollable link strip */}
-          <div className="flex gap-6 overflow-x-auto scrollbar-hide flex-1 min-w-0">
-            {posts.map(post => (
-              <Link
-                key={post.frontmatter.slug}
-                to={`/microblog/${post.frontmatter.slug}`}
-                className="whitespace-nowrap text-sm text-gray-400 hover:text-white transition-colors duration-200 flex items-center gap-2 group py-0.5"
-              >
-                <span className="text-gray-600 text-xs">{post.frontmatter.date}</span>
-                <span className="text-gray-600">·</span>
-                <span className="group-hover:text-white transition-colors">{post.frontmatter.title}</span>
-              </Link>
-            ))}
+          {/* Marquee viewport — hides overflow, fills remaining space */}
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <div className="marquee-track flex gap-8 w-max">
+              {doubled.map((post, i) => (
+                <Link
+                  key={`${post.frontmatter.slug}-${i}`}
+                  to={`/microblog/${post.frontmatter.slug}`}
+                  className="whitespace-nowrap text-sm text-gray-400 hover:text-white transition-colors duration-200 flex items-center gap-2 group py-0.5"
+                >
+                  <span className="text-gray-600 text-xs">{post.frontmatter.date}</span>
+                  <span className="text-gray-600">·</span>
+                  <span className="group-hover:text-white transition-colors">{post.frontmatter.title}</span>
+                </Link>
+              ))}
+            </div>
           </div>
 
-          {/* View all */}
+          {/* Fixed view-all link */}
           <Link
             to="/microblog"
             className="flex-shrink-0 text-xs text-gray-500 hover:text-blue-400 transition-colors whitespace-nowrap ml-2"
