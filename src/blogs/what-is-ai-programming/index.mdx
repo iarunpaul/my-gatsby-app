@@ -1,0 +1,217 @@
+---
+title: "AI Programming for Senior Backend Developers: A Production-First Guide"
+date: "2026-02-22"
+description: "How senior backend engineers should plan, design, and deliver AI-enabled production systems without breaking architecture, security, or governance."
+tags:
+  - AI
+  - Backend
+  - Architecture
+  - .NET
+  - Clean Architecture
+  - Domain Driven Design
+slug: "what-is-ai-programming"
+---
+
+## AI Is Not a Rewrite — It Is a Dependency
+
+Most AI content today assumes one of two extremes: either you are training models, or you are prompting ChatGPT. Neither reflects how real production systems adopt AI.
+
+For senior backend developers, AI is best treated as a volatile external dependency that must be controlled, governed, and isolated. This article explains how to plan AI programming when you own production systems, care about uptime, security, and audits, and cannot afford architectural regressions.
+
+---
+
+## The Mental Shift: From "AI Features" to "AI Capabilities"
+
+Traditional feature development follows a simple rule: deterministic input produces deterministic output. AI-enabled development breaks that contract — deterministic input now produces a *probabilistic suggestion*. That single difference changes everything: validation, security, persistence, testing, and ownership.
+
+> **AI may suggest. Your domain must decide.**
+
+---
+
+## Stack Selection: Why Backend-First Still Wins
+
+Choose your stack based on production responsibility, not AI trend velocity.
+
+### Recommended Stack (Enterprise-Ready)
+
+| Layer | Technology | Why |
+|-------|------------|-----|
+| API & Core | .NET / Java | Strong typing, security, maturity |
+| Domain | Clean Architecture + DDD | Deterministic business logic |
+| AI Access | SDK-based (OpenAI / Azure OpenAI) | Replaceable inference |
+| Retrieval | SQL + Vector Store | Structured + semantic |
+| Async | Message queues | Cost & latency control |
+| UI | TypeScript | AI interaction surfaces |
+| Python | Optional, isolated | Experiments only |
+
+Python excels at research, prototyping, and exploration. Production systems require stability, governance, and clear ownership. Most companies **consume AI** — they do not invent it.
+
+---
+
+## Clean Architecture for AI Systems
+
+AI must sit **outside** your domain.
+
+```
+Clients / UI
+    ↓
+API Layer
+    ↓         ↓
+AI Orchestration   Domain Layer
+    ↓                  ↓
+LLM Provider      Infrastructure
+```
+
+If your domain depends on AI, you lose testability, auditability, and trust. AI changes fast. Domains must not.
+
+---
+
+## Domain-Driven Design: How AI Fits (and How It Must Not)
+
+AI belongs to application services, orchestration, and advisory logic. It must never create aggregates, persist entities, or bypass invariants.
+
+**Example:**
+
+```
+AI: "This order should be refunded"
+
+Domain:
+  - RefundPolicy.Evaluate(context)
+  - Raises RefundProposed event
+  - Human or workflow approves
+```
+
+AI produces context, not commands.
+
+---
+
+## AI-Oriented Application Layer
+
+Your application layer becomes responsible for prompt versioning, model selection, token budgeting, tool exposure, and output validation.
+
+```
+Application/
+ ├─ AI/
+ │   ├─ Prompts/
+ │   ├─ Pipelines/
+ │   ├─ Policies/
+ │   └─ OutputSchemas/
+```
+
+AI output must be parsed, schema-validated, and rejected if unsafe. Never trust free-form text.
+
+---
+
+## Retrieval-Augmented Generation (RAG): The Production Way
+
+RAG is not "search + AI." Production RAG requires tenant isolation, domain filtering, and traceability. The mandatory constraints are clear: no cross-tenant embeddings, no raw documents in prompts, and no direct database writes from AI.
+
+---
+
+## Asynchronous AI: The Default, Not the Exception
+
+AI is slow, expensive, and rate-limited. Therefore, AI calls belong in background jobs, message-driven pipelines, and idempotent handlers:
+
+```
+Event → AI Handler → Result Event
+```
+
+If AI fails, your system must still work.
+
+---
+
+## Governance: Why Companies Say "Yes" to AI in Production
+
+Most AI proofs of concept fail not technically, but organizationally. Companies require three things.
+
+**Observability** — token usage per tenant, cost per request, latency per model, and failure rates.
+
+**Auditability** — who requested AI, what data scope was used, which model answered, and which prompt version was active.
+
+**Control** — feature flags, kill switches, model fallback, and rate limits.
+
+If you cannot turn AI off safely, it will not ship.
+
+---
+
+## Security: AI-Specific Threat Model
+
+Traditional security is insufficient. You must also address prompt injection, data leakage, tool abuse, over-permissioned context, and output manipulation.
+
+Production safeguards include: AI access only via the backend, explicit tool whitelisting, context minimization, output schema enforcement, and role-based retrieval filters.
+
+> Treat AI endpoints like payment APIs, not search boxes.
+
+---
+
+## How Companies Actually Accept AI in Production
+
+Organizations approve AI when domain logic remains deterministic, AI is observable and auditable, costs are predictable, failures are contained, and humans can override decisions.
+
+They reject AI when it bypasses rules, writes data directly, or cannot be explained.
+
+---
+
+## Runtime Request Flow
+
+Every AI-enabled request follows a predictable sequence through the system. Understanding this flow is essential for debugging, auditing, and designing reliable pipelines.
+
+```
+User Action
+  → ASP.NET Core API
+      → Auth + Tenant Resolution
+      → Input Validation
+      → AI Orchestrator
+          → (Optional) RAG Retrieval
+          → LLM Call
+          → Structured AI Result
+      → Domain Validation
+      → Domain Event / Response
+  → Client
+```
+
+Notice that domain validation always happens *after* the AI result is returned — never before, and never inside the AI orchestrator. The domain has the final word.
+
+---
+
+## Translating Architecture into a Real .NET Solution
+
+The layered architecture maps directly to a concrete folder structure. This is not theoretical — it is how you should structure your solution from day one.
+
+```
+src/
+├─ Presentation/
+│   └─ Api/
+├─ Application/
+│   ├─ AiOrchestration/
+│   ├─ Pipelines/
+│   └─ Policies/
+├─ Domain/
+│   ├─ Models/
+│   ├─ Services/
+│   └─ Events/
+├─ Infrastructure/
+│   ├─ Persistence/
+│   ├─ VectorSearch/
+│   ├─ OpenAI/
+│   └─ Messaging/
+└─ Observability/
+```
+
+This maps 1:1 with the architecture diagram. Each layer has a single responsibility, clear ownership, and no upward dependencies. AI concerns live entirely within `Application/AiOrchestration/` — isolated, replaceable, and testable in isolation.
+
+---
+
+## The Senior Developer Advantage
+
+Junior engineers learn prompts and call APIs. Senior engineers design boundaries, control failure modes, and own governance.
+
+AI does not replace backend engineering — it exposes weak architecture faster.
+
+---
+
+## Final Guidance
+
+Do not abandon your stack. Do not chase frameworks. Do not embed AI into your domain.
+
+Instead: anchor in clean architecture, treat AI as a volatile dependency, and design for failure, audit, and control. That is how AI reaches production — and stays there.
