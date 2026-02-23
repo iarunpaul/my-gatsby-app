@@ -215,3 +215,220 @@ AI does not replace backend engineering — it exposes weak architecture faster.
 Do not abandon your stack. Do not chase frameworks. Do not embed AI into your domain.
 
 Instead: anchor in clean architecture, treat AI as a volatile dependency, and design for failure, audit, and control. That is how AI reaches production — and stays there.
+
+---
+
+## Agentic Flows: What Actually Changes (and What Must NOT)
+
+This is an excellent and necessary question, and it's where most "AI architectures" quietly break.
+
+You're essentially asking: what changes when AI stops being advisory and starts acting autonomously — without destroying domain integrity, auditability, or production trust?
+
+Below is a clear, production-safe answer — not hype, not "let the agent decide."
+
+### A Critical Correction First
+
+> **AI must never "take over" domain control. It may only be delegated bounded authority.**
+
+If AI truly owns domain decisions, you lose determinism, audits, legal defensibility, and rollback. Agentic systems require explicit architectural upgrades — not shortcuts.
+
+---
+
+### New Mental Model: From "AI as Advisor" → "AI as Operator Under Policy"
+
+**Traditional AI flow:**
+
+```
+AI → Suggestion → Domain decides
+```
+
+**Agentic flow:**
+
+```
+AI → Proposes Action → Policy validates → Domain executes
+```
+
+> **The domain still executes. AI never does.**
+
+---
+
+### What Actually Changes in the Architecture
+
+**What does NOT change:**
+
+- Clean Architecture boundaries
+- Domain invariants
+- Aggregate ownership
+- Persistence rules
+- Audit requirements
+
+**What MUST be added:**
+
+- Agent Runtime Layer
+- Explicit Capability Model
+- Policy & Guardrail Engine
+- Human Escalation Paths
+- Agent Memory (Non-Domain)
+
+> AI never touches Domain directly. The Policy Engine is mandatory.
+
+---
+
+### The Agent Runtime Layer
+
+This is not just "LLM + tools." The Agent Runtime is a workflow engine that reasons probabilistically.
+
+**Responsibilities:**
+
+- Planning (multi-step reasoning)
+- Tool selection
+- State tracking
+- Retry & rollback
+- Timeout handling
+
+**What it is NOT allowed to do:**
+
+- Persist domain state
+- Bypass validation
+- Execute side effects directly
+
+---
+
+### Capability-Based Control (Non-Negotiable)
+
+Agents must not have *access*. They must have *capabilities*.
+
+```yaml
+AgentCapabilities:
+  - ReadOrderSummary
+  - ProposeRefund
+  - RequestHumanApproval
+```
+
+**Not allowed:**
+
+```yaml
+# Forbidden
+- WriteOrder
+- DeleteCustomer
+- ExecutePayment
+```
+
+Capabilities are explicit, auditable, and revocable.
+
+---
+
+### The Policy Engine: The Real Gatekeeper
+
+This is where companies say "OK, ship it."
+
+**Policy inputs:**
+
+- Agent identity
+- Capability requested
+- Domain context
+- Confidence score
+- Risk classification
+
+**Policy outcomes:**
+
+- Allow
+- Deny
+- Escalate
+- Throttle
+
+```
+IF RefundAmount > €500
+AND AgentConfidence < 0.85
+→ Require Human Approval
+```
+
+> This is deterministic code — not AI.
+
+---
+
+### Domain Layer: What Changes (Very Little)
+
+The domain still validates invariants, raises events, and controls persistence.
+
+**What's new:**
+
+- "Proposed Action" commands
+- Confidence-aware execution
+- Escalation-aware workflows
+
+```
+ProposeRefundCommand
+  - OrderId
+  - Reason
+  - Confidence
+  - AgentId
+```
+
+The domain may still reject it.
+
+---
+
+### Agent Memory: Where It May Exist (Safely)
+
+Agents need memory — but not domain memory.
+
+**Allowed memory:**
+
+- Conversation context
+- Task history
+- Planning notes
+- External summaries
+
+**Forbidden memory:**
+
+- Source of truth
+- Financial state
+- Customer records
+
+Memory must be time-bound, namespaced, and disposable.
+
+---
+
+### Observability Becomes Mandatory (Not Optional)
+
+Agentic systems must log every plan step, every capability request, every policy decision, every domain rejection, and every human escalation.
+
+> If you cannot answer "Why did the agent do this?" — you cannot ship.
+
+---
+
+### Human-in-the-Loop Is Not a Failure
+
+In agentic systems, humans are control surfaces — not fallback hacks.
+
+Design explicit approval queues, review dashboards, and override actions. Companies trust systems that ask for help and admit uncertainty.
+
+---
+
+### Anti-Patterns (Hard No)
+
+- AI writes directly to DB
+- AI executes payments
+- AI bypasses policies
+- AI "learns" domain rules
+- AI confidence replaces validation
+
+> These systems do not survive audits.
+
+---
+
+### The Final Rule
+
+> **Agents may reason. Policies may decide. Domains may act.**
+
+If you violate that order, your system will fail — technically, legally, or reputationally.
+
+---
+
+### What's Next
+
+- Design a capability model for a real domain (ERP / CRM)
+- Build a C# agent runtime skeleton
+- Design policy-as-code for agent governance
+- Map agentic maturity levels (L1 → L4)

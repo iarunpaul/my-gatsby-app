@@ -35,7 +35,9 @@
       "Bash(powershell -Command:*)",
       "Bash(find:*)",
       "Bash(ls:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(winget install:*)",
+      "Bash(gh:*)"
     ],
     "deny": [],
     "ask": []
