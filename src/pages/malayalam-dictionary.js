@@ -232,10 +232,17 @@ export default function MalayalamDictionaryPage() {
 
   const debouncedQuery = useDebounce(query, 400);
 
+  // Poll health every 20s until online, then every 60s
   useEffect(() => {
-    fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(8000) })
-      .then((r) => setApiStatus(r.ok ? "ok" : "down"))
-      .catch(() => setApiStatus("down"));
+    let alive = true;
+    const check = () => {
+      fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(6000) })
+        .then((r) => { if (alive) setApiStatus(r.ok ? "ok" : "down"); })
+        .catch(() => { if (alive) setApiStatus("down"); });
+    };
+    check();
+    const interval = setInterval(check, 20000);
+    return () => { alive = false; clearInterval(interval); };
   }, []);
 
   const search = useCallback(async (word) => {
@@ -353,15 +360,21 @@ export default function MalayalamDictionaryPage() {
         {hasExact && <ExactMatchCard entry={result.exactMatch} />}
 
         {/* AI Summary */}
-        {result?.aiGeneratedSummary && (
-          <div className="bg-indigo-950/50 border border-indigo-700/40 rounded-2xl p-5">
+        {result && hasResults && (
+          <div className="bg-indigo-950/40 border border-indigo-800/40 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-base">✨</span>
-              <span className="text-xs font-semibold text-indigo-300 uppercase tracking-widest">AI Summary</span>
+              <span className="text-xs font-semibold text-indigo-300 uppercase tracking-widest">AI Context</span>
             </div>
-            <p className="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">
-              {result.aiGeneratedSummary}
-            </p>
+            {result.aiGeneratedSummary ? (
+              <p className="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">
+                {result.aiGeneratedSummary}
+              </p>
+            ) : (
+              <p className="text-slate-500 text-sm italic">
+                AI context unavailable — Azure OpenAI may not be responding for this deployment.
+              </p>
+            )}
           </div>
         )}
 
