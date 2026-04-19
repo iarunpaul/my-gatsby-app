@@ -9,12 +9,13 @@ const Header = () => {
         <Link to="/" className="text-xl font-bold">
           Your Name
         </Link>
-        <nav>
-          <Link to="/projects" className="mr-4">
-            Projects
+        <nav className="flex items-center gap-6">
+          <Link to="/blog" className="hover:text-blue-200 transition-colors">
+            Blogs
           </Link>
-          <a href="https://blog.iarunpaul.com" target="_blank" rel="noopener noreferrer">
-            Blog
+          <a href="/#personal-lounge"
+            className="bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg font-medium transition-colors">
+            Personal Lounge
           </a>
         </nav>
       </div>

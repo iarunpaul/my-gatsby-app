@@ -1,11 +1,13 @@
 // src/components/layout.js - IMPROVED VERSION WITH MODERN NAVIGATION
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useStaticQuery, graphql } from "gatsby";
 
 const Layout = ({ pageTitle, children }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [blogsOpen, setBlogsOpen] = useState(false);
+  const blogsRef = useRef(null);
 
   const data = useStaticQuery(graphql`
     query {
@@ -31,6 +33,16 @@ const Layout = ({ pageTitle, children }) => {
 
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (blogsRef.current && !blogsRef.current.contains(e.target)) {
+        setBlogsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   const toggleMenu = () => {
@@ -85,51 +97,68 @@ const Layout = ({ pageTitle, children }) => {
                 About
               </NavLink>
               
-              <ExternalNavLink href="https://blog.iarunpaul.com" isScrolled={isScrolled}>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-                </svg>
-                GitHubPage
-                <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </ExternalNavLink>
-              
-              <NavLink to="/blog" isScrolled={isScrolled}>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-                </svg>
-                Blogs
-              </NavLink>
-              <NavLink to="/microblog" isScrolled={isScrolled}>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
-                </svg>
-                MicroBlog
-              </NavLink>
-              <NavLink to="/career-copilot" isScrolled={isScrolled}>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                CareerCopilot
-              </NavLink>
+              {/* Split Blogs button */}
+              <div ref={blogsRef} className={`relative flex items-center rounded-lg border ${isScrolled ? 'border-gray-200' : 'border-white/20'}`}>
+                <Link
+                  to="/blog"
+                  className={`px-3 py-2 rounded-l-lg text-sm font-medium transition-all duration-200 flex items-center ${
+                    isScrolled ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-100' : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                  </svg>
+                  Blogs
+                </Link>
+                <div className={`w-px self-stretch ${isScrolled ? 'bg-gray-200' : 'bg-white/20'}`} />
+                <button
+                  onClick={() => setBlogsOpen(o => !o)}
+                  className={`px-2 py-2 rounded-r-lg text-sm font-medium transition-all duration-200 flex items-center ${
+                    isScrolled ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-100' : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                  aria-label="Blog sub-menu"
+                >
+                  <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${blogsOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {blogsOpen && (
+                  <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 min-w-44 z-50">
+                    <Link to="/microblog" onClick={() => setBlogsOpen(false)}
+                      className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                      <svg className="w-4 h-4 mr-3 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+                      </svg>
+                      Microblogs
+                    </Link>
+                    <a href="https://blog.iarunpaul.com" target="_blank" rel="noopener noreferrer"
+                      onClick={() => setBlogsOpen(false)}
+                      className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                      <svg className="w-4 h-4 mr-3 text-gray-700" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                      </svg>
+                      GitHub Blogs
+                      <svg className="w-3 h-3 ml-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </a>
+                  </div>
+                )}
+              </div>
 
-              <NavLink to="/az-204-exam" isScrolled={isScrolled} isActive={pageTitle === "AZ-204 Exam Questions"}>
+              {/* Personal Lounge */}
+              <a href="/#personal-lounge"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center ${
+                  isScrolled
+                    ? 'text-purple-700 hover:text-purple-900 hover:bg-purple-50 border border-purple-200'
+                    : 'text-purple-200 hover:text-white hover:bg-purple-500/30 border border-purple-400/40'
+                }`}
+              >
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
                 </svg>
-                AZ-204 Exam
-              </NavLink>
-              
-              <ExternalNavLink href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" isScrolled={isScrolled}>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                Todo App
-                <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </ExternalNavLink>
+                Personal Lounge
+              </a>
             </nav>
 
             {/* Mobile menu button */}
@@ -177,16 +206,6 @@ const Layout = ({ pageTitle, children }) => {
                 About
               </MobileNavLink>
               
-              <MobileExternalLink href="https://blog.iarunpaul.com" onClick={() => setIsMenuOpen(false)}>
-                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
-                </svg>
-                Blog
-                <svg className="w-3 h-3 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </MobileExternalLink>
-              
               <MobileNavLink to="/blog" onClick={() => setIsMenuOpen(false)}>
                 <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
@@ -194,33 +213,27 @@ const Layout = ({ pageTitle, children }) => {
                 Blogs
               </MobileNavLink>
               <MobileNavLink to="/microblog" onClick={() => setIsMenuOpen(false)}>
-                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 mr-3 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
                 </svg>
-                MicroBlog
+                Microblogs
               </MobileNavLink>
-              <MobileNavLink to="/career-copilot" onClick={() => setIsMenuOpen(false)}>
-                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              <MobileExternalLink href="https://blog.iarunpaul.com" onClick={() => setIsMenuOpen(false)}>
+                <svg className="w-4 h-4 mr-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
                 </svg>
-                CareerCopilot
-              </MobileNavLink>
-
-              <MobileNavLink to="/az-204-exam" onClick={() => setIsMenuOpen(false)} isActive={pageTitle === "AZ-204 Exam Questions"}>
-                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                AZ-204 Exam
-              </MobileNavLink>
-              <MobileExternalLink href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" onClick={() => setIsMenuOpen(false)}>
-                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                Todo App
+                GitHub Blogs
                 <svg className="w-3 h-3 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
               </MobileExternalLink>
+              <a href="/#personal-lounge" onClick={() => setIsMenuOpen(false)}
+                className="flex items-center px-4 py-3 text-sm font-medium text-purple-700 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors duration-200 border border-purple-200">
+                <svg className="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                Personal Lounge
+              </a>
             </div>
           </div>
         </div>
@@ -274,17 +287,19 @@ const Layout = ({ pageTitle, children }) => {
                 <li><Link to="/" className="text-gray-400 hover:text-white transition-colors duration-200">Home</Link></li>
                 <li><Link to="/about" className="text-gray-400 hover:text-white transition-colors duration-200">About</Link></li>
                 <li><Link to="/blog" className="text-gray-400 hover:text-white transition-colors duration-200">Blogs</Link></li>
-                <li><Link to="/microblog" className="text-gray-400 hover:text-white transition-colors duration-200">MicroBlog</Link></li>
-                <li><a href="https://blog.iarunpaul.com" className="text-gray-400 hover:text-white transition-colors duration-200">External Blog</a></li>
+                <li><Link to="/microblog" className="text-gray-400 hover:text-white transition-colors duration-200">Microblogs</Link></li>
+                <li><a href="https://blog.iarunpaul.com" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white transition-colors duration-200">GitHub Blogs</a></li>
               </ul>
             </div>
 
-            {/* Projects */}
+            {/* Personal Lounge */}
             <div>
-              <h3 className="font-semibold text-lg mb-4">Projects</h3>
+              <h3 className="font-semibold text-lg mb-4">Personal Lounge</h3>
               <ul className="space-y-2">
+                <li><Link to="/learn" className="text-gray-400 hover:text-white transition-colors duration-200">AZ-204 Practice</Link></li>
                 <li><a href="https://victorious-hill-0dfe19203.6.azurestaticapps.net" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white transition-colors duration-200">Todo App</a></li>
-                <li><span className="text-gray-500">More projects coming soon...</span></li>
+                <li><Link to="/career-copilot" className="text-gray-400 hover:text-white transition-colors duration-200">Career Copilot</Link></li>
+                <li><Link to="/malayalam-dictionary" className="text-gray-400 hover:text-white transition-colors duration-200">Malayalam Dictionary</Link></li>
               </ul>
             </div>
           </div>
@@ -316,20 +331,6 @@ const NavLink = ({ to, children, isScrolled, isActive }) => (
   </Link>
 );
 
-const ExternalNavLink = ({ href, children, isScrolled }) => (
-  <a
-    href={href}
-    target="_blank"
-    rel="noopener noreferrer"
-    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center ${
-      isScrolled
-        ? 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-        : 'text-white/80 hover:text-white hover:bg-white/10'
-    }`}
-  >
-    {children}
-  </a>
-);
 
 const MobileNavLink = ({ to, children, onClick, isActive }) => (
   <Link

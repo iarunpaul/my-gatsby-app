@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import Layout from "../components/layout";
 
 const API_URL =
   (typeof window !== "undefined" && window.__DICT_API__) ||
@@ -281,6 +282,7 @@ export default function MalayalamDictionaryPage() {
   const QUICK_WORDS = ["love", "freedom", "water", "knowledge", "river", "dream", "peace", "time"];
 
   return (
+    <Layout pageTitle="Malayalam Dictionary">
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
 
       {/* Header */}
@@ -449,5 +451,6 @@ export default function MalayalamDictionaryPage() {
         </p>
       </div>
     </main>
+    </Layout>
   );
 }
