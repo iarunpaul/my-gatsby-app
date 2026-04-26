@@ -1,0 +1,102 @@
+---
+title: "Java 21 Virtual Thread APIs"
+description: "StructuredTaskScope and ScopedValue — two APIs built for virtual threads."
+date: "2026-04-26"
+slug: "java21-virtual-threads-apis"
+tags: ["java", "java21", "concurrency", "virtual-threads"]
+---
+
+## Java 21 APIs Built for Virtual Threads
+
+Virtual threads landed in Java 21, but two companion APIs make them truly useful in production: **StructuredTaskScope** and **ScopedValue**. They solve real problems that `CompletableFuture` and `ThreadLocal` leave behind.
+
+---
+
+### 1️⃣ StructuredTaskScope — Parallel Subtasks Without Leaks
+
+The problem with `CompletableFuture` is that forked tasks have **no relationship** to each other or to the code that spawned them. If one fails, the others keep running. If the caller times out, the subtasks keep running. There's no concept of *"these tasks belong to this operation."*
+
+**StructuredTaskScope** enforces one rule: **subtasks cannot outlive their scope.**  
+When the `try` block exits, all forked tasks are guaranteed to be done — success, failure, or cancelled. It's the same guarantee a regular `try` block gives you for variables.
+
+```java
+try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+    var price     = scope.fork(() -> fetchPrice(id));     // runs concurrently
+    var inventory = scope.fork(() -> fetchInventory(id)); // runs concurrently
+
+    scope.join().throwIfFailed(); // wait; if either threw, cancel the other and rethrow
+
+    return new ProductDetail(price.get(), inventory.get()); // guaranteed safe here
+}
+// scope exits → both tasks are done, no leaks
+```
+
+#### Two built-in policies
+
+| Policy | Behaviour | Equivalent |
+|---|---|---|
+| `ShutdownOnFailure` | Cancel all if **any** fails | `Task.WhenAll` (C#) |
+| `ShutdownOnSuccess` | Cancel all once the **first** succeeds | `Task.WhenAny` (C#) |
+
+---
+
+### 2️⃣ ScopedValue — Immutable Request-Scoped Data
+
+`ThreadLocal` stores a value per thread. With virtual threads that still works, but has two problems:
+- It's **mutable** — any code anywhere can overwrite it.
+- Child tasks forked via `StructuredTaskScope` **don't automatically inherit** the parent's `ThreadLocal` values.
+
+**ScopedValue** fixes both — it's **immutable within a scope** and **automatically flows down** into all child virtual threads:
+
+```java
+// Set once at the request boundary (e.g. in a filter or interceptor)
+ScopedValue.where(REQUEST_ID, "req-abc-123").run(() -> {
+    // anywhere inside this block, including forked child threads:
+    String id = REQUEST_ID.get(); // always "req-abc-123", cannot be overwritten
+});
+// automatically unbound here
+```
+
+The C# equivalent is `AsyncLocal<T>` — same idea, but `ScopedValue` is stricter: **read-only** within a scope, not just inherited.
+
+---
+
+### 3️⃣ Why Preview in Java 21, Stable in Java 24?
+
+Both APIs were conceptually finalised in Java 21, but the JDK team kept them in **preview** to allow the API shape to be refined based on real-world feedback.
+
+You can use them today with `--enable-preview` — which is what the `pom.xml` compiler flag does:
+
+```xml
+<compilerArgs>
+    <arg>--enable-preview</arg>
+</compilerArgs>
+```
+
+✅ **Java 21** — use with `--enable-preview`, works fine in production  
+✅ **Java 24+** — remove the flag, they just work
+
+---
+
+### Putting It Together
+
+```java
+private static final ScopedValue<String> REQUEST_ID = ScopedValue.newInstance();
+
+public ProductDetail handle(String requestId, String productId) throws Exception {
+    return ScopedValue.where(REQUEST_ID, requestId).call(() -> {
+        try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            var price     = scope.fork(() -> fetchPrice(productId));
+            var inventory = scope.fork(() -> fetchInventory(productId));
+
+            scope.join().throwIfFailed();
+
+            return new ProductDetail(price.get(), inventory.get());
+        }
+    });
+}
+```
+
+`REQUEST_ID` flows automatically into both `fetchPrice` and `fetchInventory` — no passing it through method parameters, no risk of it being overwritten mid-request.
+
+Peace... 🍀
