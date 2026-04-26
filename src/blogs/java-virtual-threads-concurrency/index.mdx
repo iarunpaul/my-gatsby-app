@@ -1,0 +1,314 @@
+---
+title: "Java Concurrency in 2025: Sequential, CompletableFuture, and Virtual Threads"
+description: "A hands-on comparison of three concurrency strategies in Java — sequential, CompletableFuture, and StructuredTaskScope with virtual threads — using a real product aggregation service."
+date: "2026-04-26"
+tags: ["java", "virtual-threads", "concurrency", "spring-boot", "completable-future", "structured-concurrency"]
+slug: "java-virtual-threads-concurrency"
+featured: true
+type: "article"
+---
+
+# Java Concurrency in 2025: Sequential, CompletableFuture, and Virtual Threads
+
+There is a question that shows up in every Java backend team at some point: **how do I fetch data from three services at the same time without making my code unreadable?**
+
+You have a product page. It needs a price, an inventory count, and a list of reviews. Each of those comes from a different downstream service. Fetching them one at a time is the obvious starting point — but it means your total latency is the *sum* of all three calls. Fetching them in parallel cuts that to the *maximum* of the three. The question is what that parallelism costs in terms of code complexity, safety, and maintainability.
+
+This post walks through all three strategies using a real working Spring Boot demo. The same product aggregation problem, solved three ways.
+
+## The Setup
+
+We have three simulated downstream calls with realistic latencies:
+
+```java
+@Service
+public class SlowExternalService {
+
+    public String fetchPrice(String productId) {
+        sleep(500);  // 500ms — pricing service
+        return "$%.2f".formatted(49.99 + productId.hashCode() % 50);
+    }
+
+    public int fetchInventory(String productId) {
+        sleep(300);  // 300ms — inventory service
+        return Math.abs(productId.hashCode() % 100);
+    }
+
+    public List<String> fetchReviews(String productId) {
+        sleep(700);  // 700ms — reviews service (slowest)
+        return List.of("Great product!", "Fast delivery", "Would buy again");
+    }
+}
+```
+
+And a simple result model:
+
+```java
+public record ProductDetail(
+        String productId,
+        String price,
+        int inventory,
+        List<String> reviews,
+        long fetchDurationMs,
+        String fetchStrategy
+) {}
+```
+
+The goal: assemble a `ProductDetail` for any given product ID. Three strategies, same result.
+
+---
+
+## Strategy 1: Sequential
+
+```java
+public ProductDetail fetchSequential(String productId) {
+    long start = System.currentTimeMillis();
+
+    String price         = external.fetchPrice(productId);
+    int inventory        = external.fetchInventory(productId);
+    List<String> reviews = external.fetchReviews(productId);
+
+    return new ProductDetail(productId, price, inventory, reviews,
+            System.currentTimeMillis() - start, "sequential");
+}
+```
+
+**Total time: ~1500ms** (500 + 300 + 700)
+
+This is clean. It reads like a recipe. Each line does one thing, and by the end you have everything you need. A junior developer reading this code has no questions.
+
+The problem is the wall-clock time: you're waiting for the price service to finish before you even *ask* for inventory. These three calls have no dependency on each other — price doesn't need inventory, reviews don't need price — but you're serializing them anyway.
+
+With platform threads, the OS thread is held hostage for the full 1500ms. With virtual threads, the OS thread is actually freed during each `sleep` — so the scalability story improves — but the *latency* doesn't. You're still waiting 1500ms.
+
+---
+
+## Strategy 2: CompletableFuture
+
+```java
+public ProductDetail fetchWithCompletableFuture(String productId) {
+    long start = System.currentTimeMillis();
+
+    CompletableFuture<String>       priceFuture     =
+        CompletableFuture.supplyAsync(() -> external.fetchPrice(productId));
+    CompletableFuture<Integer>      inventoryFuture =
+        CompletableFuture.supplyAsync(() -> external.fetchInventory(productId));
+    CompletableFuture<List<String>> reviewsFuture   =
+        CompletableFuture.supplyAsync(() -> external.fetchReviews(productId));
+
+    return CompletableFuture
+            .allOf(priceFuture, inventoryFuture, reviewsFuture)
+            .thenApply(ignored -> new ProductDetail(
+                    productId,
+                    priceFuture.join(),
+                    inventoryFuture.join(),
+                    reviewsFuture.join(),
+                    System.currentTimeMillis() - start,
+                    "completable-future"))
+            .join();
+}
+```
+
+**Total time: ~700ms** (max of the three — the reviews service wins)
+
+This is faster. All three calls fire simultaneously, and you wait for all three to finish before assembling the result.
+
+Let's walk through what's happening:
+
+- `supplyAsync` submits each call to the common ForkJoinPool, returning a `CompletableFuture` immediately
+- `allOf` creates a new future that completes only when *all three* are done
+- `thenApply` runs a callback once `allOf` completes — this is where we build the `ProductDetail`
+- Inside `thenApply`, the three `.join()` calls are safe because `allOf` already guarantees all three futures are resolved — no blocking occurs
+- The final `.join()` at the end bridges back to the synchronous caller — `fetchWithCompletableFuture` returns `ProductDetail`, not `CompletableFuture<ProductDetail>`, so it has to block somewhere
+
+**The trade-offs:**
+
+The speed improvement is real, but look at what you gave up to get it. You're now thinking in callbacks. The code no longer reads top to bottom. You have to understand the `allOf → thenApply → join` chain to follow what's happening.
+
+More importantly: **there is no automatic cancellation**. If `reviewsFuture` throws an exception, `priceFuture` and `inventoryFuture` are still running — burning threads and making downstream calls that will be discarded. You'd have to wire up `.exceptionally()` chains manually to handle this properly.
+
+And that final `.join()` is a footgun in reactive contexts — it blocks the calling thread, which is illegal if you're inside a reactive pipeline (WebFlux, for example).
+
+---
+
+## Strategy 3: Structured Concurrency with Virtual Threads
+
+```java
+public ProductDetail fetchWithStructuredConcurrency(String productId) throws Exception {
+    long start = System.currentTimeMillis();
+
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+
+        var price     = scope.fork(() -> external.fetchPrice(productId));
+        var inventory = scope.fork(() -> external.fetchInventory(productId));
+        var reviews   = scope.fork(() -> external.fetchReviews(productId));
+
+        // Wait for all to complete. If any threw, cancel the others and rethrow here.
+        scope.join().throwIfFailed();
+
+        return new ProductDetail(productId, price.get(), inventory.get(), reviews.get(),
+                System.currentTimeMillis() - start, "structured-concurrency");
+    }
+}
+```
+
+**Total time: ~700ms** (same as CompletableFuture)
+
+Same speed. Completely different code story.
+
+Read it again. It goes: fork three tasks, wait for all of them, read the results. That is exactly what you want to say, and that is exactly what the code says. No callbacks, no chaining, no `.thenApply`. It reads like the sequential version, just with explicit fork and join points.
+
+`StructuredTaskScope.ShutdownOnFailure` is doing real work here. If the reviews service throws an exception, `scope.join()` propagates it — and before doing so, it cancels the other two tasks immediately. With `CompletableFuture`, those tasks keep running. With `StructuredTaskScope`, they don't. No resource leaks, no wasted downstream calls.
+
+`scope.fork()` runs each task on a **virtual thread**. That is what makes this approach viable without a thread pool — virtual threads are cheap enough that creating one per subtask is not a problem.
+
+The `try-with-resources` block enforces a critical invariant: **subtasks cannot outlive their scope**. The scope is closed when the `try` block exits, which means by the time you call `price.get()`, the task is guaranteed to have completed. No race conditions, no "is this future done?" questions.
+
+---
+
+## The Threading Model: What Virtual Threads Actually Change
+
+To understand why this works, you need to understand what a virtual thread is.
+
+A **platform thread** maps 1:1 to an OS thread. OS threads are expensive — they carry a large stack (usually 1MB+), context-switching between them has overhead, and most systems can only run a few thousand before performance degrades. This is why thread pools exist: you size the pool to match your hardware, and everything queues behind it.
+
+A **virtual thread** is a lightweight thread managed by the JVM. It runs on a small number of OS threads called *carrier threads* (typically one per CPU core). When a virtual thread hits a blocking operation — `Thread.sleep()`, a network call, a database query — the JVM *unmounts* it from the carrier thread. The carrier thread is freed to run other virtual threads. When the blocking operation completes, the virtual thread is mounted again on any available carrier thread and continues.
+
+This means `Thread.sleep(700)` inside a virtual thread does not hold an OS thread for 700ms. It parks the virtual thread, costs almost nothing, and lets the carrier thread do other work.
+
+The implications for our three strategies:
+
+**Sequential with virtual threads**: The thread still waits 1500ms total, but the OS thread is freed during each `sleep`. Under high concurrency, the server can handle far more requests simultaneously — but a single request still takes 1500ms.
+
+**CompletableFuture with virtual threads**: The `supplyAsync` tasks run on the common ForkJoinPool, which by default uses platform threads. You can configure it to use virtual threads, but that's extra wiring. CompletableFuture predates virtual threads and doesn't take advantage of them automatically.
+
+**StructuredTaskScope with virtual threads**: `scope.fork()` always creates a virtual thread. This is the integration point — structured concurrency and virtual threads were designed together as part of Project Loom in Java 21+.
+
+---
+
+## The Load Test: Platform Threads vs Virtual Threads
+
+The demo includes two load test endpoints that make the difference concrete. Both submit `count` tasks, each sleeping 1 second:
+
+```java
+// Platform: fixed pool of 50 threads
+@GetMapping("/load-test/platform")
+public Map<String, Object> loadTestPlatform(
+        @RequestParam(defaultValue = "300") int count,
+        @RequestParam(defaultValue = "50")  int poolSize) {
+
+    try (var executor = Executors.newFixedThreadPool(poolSize)) {
+        // 300 tasks, 50 threads → 6 waves × 1s = ~6s
+    }
+}
+
+// Virtual: one thread per task, no pool cap
+@GetMapping("/load-test/virtual")
+public Map<String, Object> loadTestVirtual(
+        @RequestParam(defaultValue = "300") int count) {
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        // 300 tasks, 300 virtual threads → all sleep concurrently = ~1s
+    }
+}
+```
+
+With platform threads and a pool of 50: 300 tasks fill the pool in waves. Wave 1 (50 tasks) takes 1s, wave 2 takes 1s, and so on — 6 waves, ~6 seconds total. Double the count to 1000 and you're waiting 20 seconds.
+
+With virtual threads: all 300 tasks start immediately. They all hit `Thread.sleep(1000)`, which parks them. A handful of OS threads sit idle for 1 second, then all 300 tasks complete. Total time: ~1s, regardless of count. Try 3000. Still ~1s.
+
+This is the problem that reactive programming (`CompletableFuture`, WebFlux, Project Reactor) was invented to solve — avoiding thread-per-request blocking so servers can handle thousands of concurrent connections. Virtual threads solve the same problem, but without requiring you to rewrite your code in a reactive style.
+
+---
+
+## The Pinning Gotcha
+
+Virtual threads have one important limitation: `synchronized` blocks.
+
+```java
+@GetMapping("/pinning-demo")
+public Map<String, Object> pinningDemo() throws InterruptedException {
+    Object lock = new Object();
+
+    synchronized (lock) {
+        // Virtual thread is PINNED here — the OS thread cannot be released
+        Thread.sleep(500);
+    }
+}
+```
+
+Inside a `synchronized` block, the JVM cannot unmount the virtual thread. The carrier OS thread is held for the full duration. This defeats the purpose of virtual threads for that section of code.
+
+The fix is to use `ReentrantLock` instead of `synchronized`:
+
+```java
+ReentrantLock lock = new ReentrantLock();
+lock.lock();
+try {
+    Thread.sleep(500); // virtual thread can park here — no pinning
+} finally {
+    lock.unlock();
+}
+```
+
+You can detect pinning by running your app with `-Djdk.tracePinnedThreads=full`. It will log a warning whenever a virtual thread gets pinned. Most modern libraries have already addressed this, but if you're using older JDBC drivers or legacy synchronized code, this is worth checking.
+
+---
+
+## Choosing a Strategy
+
+| | Sequential | CompletableFuture | StructuredTaskScope |
+|---|---|---|---|
+| **Latency** | Sum of all calls | Max of all calls | Max of all calls |
+| **Code style** | Linear, readable | Callback chains | Linear, readable |
+| **Failure handling** | Exception propagates naturally | Manual `.exceptionally()` chains | Automatic cancellation |
+| **Subtask lifetime** | N/A | No enforcement | Scope boundary enforced |
+| **Virtual thread support** | Works (scales better) | Manual wiring | Built-in |
+| **Java version** | Any | Java 8+ | Java 21+ (stable in 24) |
+
+The answer depends on what you're optimizing for:
+
+- If the calls are independent and latency matters, structured concurrency is the right choice for new code on Java 21+. It's as readable as sequential code, as fast as CompletableFuture, and safer than both.
+- If you're on Java 8–20 and need parallelism, CompletableFuture is the tool. Understand the `.allOf → thenApply → join` pattern and handle failure explicitly.
+- If the calls are fast, or one depends on the output of another, sequential is perfectly fine. Don't introduce concurrency complexity that the problem doesn't require.
+
+---
+
+## Running the Demo
+
+The demo is a Spring Boot app with two profiles:
+
+```bash
+# Platform threads — default Tomcat thread pool
+mvn spring-boot:run
+
+# Virtual threads — Tomcat uses virtual threads for request handling
+mvn spring-boot:run -Dspring-boot.run.profiles=virtual
+```
+
+Then hit the endpoints:
+
+```bash
+# Which thread type is handling your request?
+GET /api/demo/thread-info
+
+# Three strategies, same result, different timings
+GET /api/demo/sequential/prod-123
+GET /api/demo/completable-future/prod-123
+GET /api/demo/structured/prod-123
+
+# Load test — platform vs virtual, side by side
+GET /api/demo/load-test/platform?count=300&poolSize=50
+GET /api/demo/load-test/virtual?count=300
+
+# Hammer the server with concurrent requests — the bottleneck is the server thread pool
+GET /api/demo/hammer?count=100
+```
+
+Run `hammer?count=100` under the platform profile and then the virtual profile without changing a line of application code. The difference in `elapsedMs` is the entire argument for virtual threads in one HTTP response.
+
+---
+
+The core insight from this exercise is not that virtual threads are magic. It is that they let you write **blocking, readable, sequential-style code** and get the scalability that previously required reactive programming. The sequential strategy with virtual threads is not slow because of I/O blocking — it is only slow because it serializes independent calls. Fix the sequencing with structured concurrency, and you get readable code, safe cancellation, and high throughput, all at the same time.
+
+Peace... 🍀
