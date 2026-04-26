@@ -41,10 +41,10 @@ public class SlowExternalService {
 }
 ```
 
-And a simple result model:
+And a simple result model:¬
 
 ```java
-public record ProductDetail(
+public record ProductDetail(¬
         String productId,
         String price,
         int inventory,
@@ -310,5 +310,135 @@ Run `hammer?count=100` under the platform profile and then the virtual profile w
 ---
 
 The core insight from this exercise is not that virtual threads are magic. It is that they let you write **blocking, readable, sequential-style code** and get the scalability that previously required reactive programming. The sequential strategy with virtual threads is not slow because of I/O blocking — it is only slow because it serializes independent calls. Fix the sequencing with structured concurrency, and you get readable code, safe cancellation, and high throughput, all at the same time.
+
+---
+
+## Further Reading
+
+### Fixing Pinned Threads in Practice
+
+The `synchronized` pinning problem surfaces in three places. Here is what to do in each.
+
+**1. Third-party libraries (HikariCP, Hibernate, Logback, etc.)**
+
+The fix is to upgrade to a version that replaced `synchronized` with `ReentrantLock`. Most major libraries did this in 2023. Nothing changes in your code — just bump the dependency version.
+
+**2. Your own code using `synchronized` blocks**
+
+```java
+// Before — pins the virtual thread
+synchronized (this) {
+    // critical section
+}
+
+// After — virtual thread can park safely
+private final ReentrantLock lock = new ReentrantLock();
+
+lock.lock();
+try {
+    // critical section
+} finally {
+    lock.unlock();
+}
+```
+
+**3. Your own code using `synchronized` methods**
+
+```java
+// Before
+public synchronized void process() { ... }
+
+// After
+public void process() {
+    lock.lock();
+    try { ... } finally { lock.unlock(); }
+}
+```
+
+The rule of thumb: `synchronized` keyword = potential pinning. `ReentrantLock` = virtual-thread safe. That is the entire fix.
+
+---
+
+### Virtual Threads vs .NET async/await
+
+.NET's async/await is the closest equivalent to Java virtual threads, but the mechanism is different enough to be worth understanding clearly.
+
+**What they have in common**
+
+Both solve the same problem: don't waste an OS thread while waiting for I/O. In both cases, writing blocking-looking code results in the OS thread being freed during the wait.
+
+```csharp
+// .NET — looks blocking, OS thread is freed during await
+var products = await dbContext.Products.ToListAsync();
+```
+
+```java
+// Java — looks blocking, OS thread is freed during I/O
+var products = repository.findAll(); // virtual thread parks here
+```
+
+Same outcome. Different mechanism.
+
+**The fundamental difference**
+
+|  | .NET async/await | Java Virtual Threads |
+|---|---|---|
+| **Mechanism** | Compiler rewrites your method into a state machine at build time | JVM intercepts blocking calls at runtime |
+| **Code requirement** | Must mark method `async`, caller must `await` | No special syntax — plain blocking code |
+| **Library requirement** | Every library in the call chain must be async | Any library works — even old blocking JDBC |
+| **Infectious?** | Yes — `async` spreads up the call stack | No — one config line, nothing else changes |
+| **Where it lives** | Language + compiler | JVM platform |
+
+**The "async is infectious" problem**
+
+In .NET, if one method needs to be async, every caller must also be async:
+
+```csharp
+// If this is async...
+public async Task<Product> GetProductAsync(Guid id) { ... }
+
+// ...then this must be async...
+public async Task<ProductResponse> HandleAsync(Guid id) {
+    var product = await GetProductAsync(id);
+}
+
+// ...and this must be async...
+public async Task<IActionResult> Get(Guid id) {
+    return Ok(await HandleAsync(id));
+}
+```
+
+Miss one `await` and you get a deadlock or a fire-and-forget bug. This is why .NET codebases end up with `Async` suffixed on hundreds of methods.
+
+In Java with virtual threads — none of that:
+
+```java
+// No async keyword. No Task<T>. No await.
+// The JVM handles parking transparently.
+public Product getProduct(UUID id) {
+    return repository.findById(id).orElseThrow(); // parks here, resumes after
+}
+```
+
+**How the state machine actually works**
+
+The .NET compiler literally rewrites your `async` method at compile time into a struct with a state machine — each `await` point becomes a numbered state. When the awaited task completes, a thread pool thread picks up the continuation from the correct state. You can inspect this in the IL.
+
+The JVM does something different. It keeps your full call stack intact but moves it off the OS thread onto the heap when a virtual thread parks. When the I/O completes, the stack is moved back onto any available carrier thread and execution continues from exactly where it left off. No code rewriting, no state machine, no compiler involvement.
+
+**The honest comparison**
+
+| Question | Answer |
+|---|---|
+| Same goal? | Yes — free OS threads during I/O |
+| Same code style? | Java wins — no async/await spreading |
+| Same library compatibility? | Java wins — old blocking libs just work |
+| More explicit control? | .NET wins — `CancellationToken`, `ConfigureAwait`, explicit async boundaries |
+| Structured lifetime? | Java wins — `StructuredTaskScope` enforces task lifetime; .NET has no direct equivalent |
+| Maturity? | .NET async/await is older (2012) and battle-tested; Java virtual threads went GA in 2023 |
+
+The .NET team is aware of this gap. There is active research into lightweight threads for .NET, but nothing GA yet. For now, async/await remains .NET's answer — and it works very well — but Java's virtual threads are genuinely simpler to adopt in an existing codebase.
+
+---
 
 Peace... 🍀
