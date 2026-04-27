@@ -1,0 +1,64 @@
+---
+title: "Java Checked vs Unchecked Exceptions"
+description: "Why Java forces you to declare some exceptions but not others."
+date: "2026-04-28"
+slug: "java-checked-unchecked-exceptions"
+tags: ["java", "exceptions", "fundamentals"]
+---
+
+## ⚠️ Checked vs Unchecked Exceptions in Java
+
+Java splits exceptions into two camps — and the compiler treats them very differently.
+
+### 🔒 Checked Exceptions
+
+The compiler **forces you to handle or declare** these. If you call a method that throws one, you must either catch it or add `throws` to your own method signature.
+
+```java
+// future.get() throws two checked exceptions
+static void demoSupplyAsync() throws ExecutionException, InterruptedException {
+    CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> ...);
+    Product product = future.get(); // blocks — can throw either of the above
+}
+```
+
+**`ExecutionException`** — wraps any exception thrown *inside* the async task. If your lambda blew up, `.get()` re-throws the cause wrapped in this.  
+**`InterruptedException`** — `.get()` blocks your thread. If another thread interrupts it (e.g. during shutdown), this is thrown.
+
+> The `throws` on the method signature is Java's way of saying: *"I'm not handling this here — caller, you deal with it."*
+
+---
+
+### 🔓 Unchecked Exceptions
+
+Extend `RuntimeException`. The compiler **does not** require you to declare or catch them — they propagate freely up the call stack until something handles them (or the thread crashes).
+
+```java
+String name = null;
+name.length(); // NullPointerException — unchecked, no throws needed
+```
+
+Common unchecked exceptions:
+- `NullPointerException`
+- `IllegalArgumentException`
+- `IndexOutOfBoundsException`
+- `IllegalStateException`
+
+---
+
+### 🆚 The Key Difference
+
+| | Checked | Unchecked |
+|---|---|---|
+| Extends | `Exception` | `RuntimeException` |
+| Compiler enforces? | ✅ Yes | ❌ No |
+| Represents | External failures you can recover from (I/O, network, DB) | Programming bugs |
+| Example | `IOException`, `ExecutionException` | `NullPointerException`, `IllegalArgumentException` |
+
+---
+
+### 💡 C# Comparison
+
+In C#, **all exceptions are unchecked** — the compiler never forces you to declare `throws`. `await task` handles both execution and cancellation transparently. Java's checked system makes the contract explicit, which is more verbose but means callers can never be surprised by what a method might throw.
+
+Peace... 🍀
