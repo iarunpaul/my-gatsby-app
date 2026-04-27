@@ -72,6 +72,33 @@ const CustomImage = ({ src, alt, caption, className = "", width = "100%" }) => {
   )
 }
 
+const GalleryItem = ({ imageData, index }) => {
+  const image = useImageByPath(imageData.src)
+  return (
+    <div className="relative">
+      {image ? (
+        <GatsbyImage
+          image={image}
+          alt={imageData.alt || `Gallery image ${index + 1}`}
+          className="rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300"
+        />
+      ) : (
+        <img
+          src={imageData.src}
+          alt={imageData.alt || `Gallery image ${index + 1}`}
+          className="w-full h-auto rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300"
+          loading="lazy"
+        />
+      )}
+      {imageData.caption && (
+        <p className="text-sm text-gray-600 text-center mt-2">
+          {imageData.caption}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // Image Gallery component with Gatsby image processing
 const ImageGallery = ({ images, columns = 2 }) => {
   const gridCols = {
@@ -83,33 +110,9 @@ const ImageGallery = ({ images, columns = 2 }) => {
 
   return (
     <div className={`grid ${gridCols[columns]} gap-4 my-8`}>
-      {images.map((imageData, index) => {
-        const image = useImageByPath(imageData.src)
-        
-        return (
-          <div key={index} className="relative">
-            {image ? (
-              <GatsbyImage
-                image={image}
-                alt={imageData.alt || `Gallery image ${index + 1}`}
-                className="rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300"
-              />
-            ) : (
-              <img
-                src={imageData.src}
-                alt={imageData.alt || `Gallery image ${index + 1}`}
-                className="w-full h-auto rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300"
-                loading="lazy"
-              />
-            )}
-            {imageData.caption && (
-              <p className="text-sm text-gray-600 text-center mt-2">
-                {imageData.caption}
-              </p>
-            )}
-          </div>
-        )
-      })}
+      {images.map((imageData, index) => (
+        <GalleryItem key={index} imageData={imageData} index={index} />
+      ))}
     </div>
   )
 }
