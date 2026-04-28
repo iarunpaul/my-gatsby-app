@@ -1,0 +1,690 @@
+---
+title: "Spring Boot Dependency Injection: Beans, Stereotypes, and Scopes"
+description: "A hands-on breakdown of how Spring's IoC container works — from @Component vs @Service vs @Repository to the right lifecycle scope for your database connection pool, S3 client, and DynamoDB client."
+date: "2026-04-28"
+tags: ["java", "spring-boot", "dependency-injection", "aws", "fundamentals"]
+slug: "spring-boot-di-beans-scopes"
+featured: true
+type: "article"
+---
+
+# Spring Boot Dependency Injection: Beans, Stereotypes, and Scopes
+
+The first time you see `@Autowired` in a Spring Boot application, it looks like magic. A field is declared but never assigned. A constructor receives arguments nobody passed. A service class gets a `DataSource` it never asked for. It all just works.
+
+This post explains the mechanism behind that magic, why Spring provides three nearly identical annotations for registering beans, and how to choose the right lifecycle scope for the objects your application manages — from a database connection pool to an AWS S3 client to a per-request trace context.
+
+---
+
+## The IoC Container
+
+Spring's core idea is **Inversion of Control**: your classes do not create their own dependencies. Instead, they declare what they need, and Spring — the **IoC container** — creates and injects those dependencies at startup.
+
+The objects the container manages are called **beans**. When Spring starts up, it scans your packages, finds classes annotated with stereotype annotations, creates instances of them, and wires them together based on their declared dependencies. By the time your first HTTP request arrives, everything is already connected.
+
+```java
+// Without Spring — you manage construction and wiring yourself
+OrderRepository repo = new OrderRepository(dataSource);
+PaymentGateway payment = new PaymentGateway(stripeConfig);
+OrderService service = new OrderService(repo, payment);
+```
+
+```java
+// With Spring — declare what you need, Spring builds the graph
+@Service
+public class OrderService {
+    private final OrderRepository repo;
+    private final PaymentGateway payment;
+
+    public OrderService(OrderRepository repo, PaymentGateway payment) {
+        this.repo = repo;
+        this.payment = payment;
+    }
+}
+```
+
+Spring reads the constructor, sees that `OrderService` needs an `OrderRepository` and a `PaymentGateway`, finds the beans it registered for those types, and passes them in. Your code never calls `new`. The wiring is Spring's job.
+
+---
+
+## @Component, @Service, @Repository — What's the Difference?
+
+All three annotations do the same core thing: they tell Spring "register this class as a bean." The difference is **semantic layer** and, for `@Repository`, one meaningful extra capability.
+
+```java
+@Component        // generic — utilities, helpers, anything not in a named layer
+public class CsvParser { ... }
+
+@Service          // business logic layer — semantic marker only
+public class OrderService { ... }
+
+@Repository       // data access layer — semantic marker plus exception translation
+public class OrderRepository { ... }
+```
+
+The semantic distinction matters more than it looks. Spring's AOP tooling, `@ComponentScan` filters, and testing utilities all use these annotations to reason about your architecture. If you mark a database class `@Service`, you lose the ability to target it with persistence-layer pointcuts or testing conventions.
+
+### What @Repository actually does differently
+
+`@Repository` wraps your class in a proxy that performs **persistence exception translation**. It intercepts low-level database exceptions — `SQLException`, `MongoException`, `HibernateException` — and converts them into Spring's unified `DataAccessException` hierarchy.
+
+Without exception translation, your service layer has to know which database technology you're using:
+
+```java
+// Without @Repository — the service is coupled to the DB technology
+@Service
+public class OrderService {
+    public void placeOrder(Order order) {
+        try {
+            repo.save(order);
+        } catch (SQLException e) {   // PostgreSQL-specific — what if we switch to Mongo?
+            throw new ServiceException("DB error", e);
+        }
+    }
+}
+```
+
+With `@Repository` on the data access class, the exception is translated before it reaches the service:
+
+```java
+@Repository
+public class OrderRepository {
+    private final JdbcTemplate jdbc;
+
+    public void save(Order order) {
+        // if this throws SQLException, Spring translates it to DataAccessException
+        jdbc.update("INSERT INTO orders ...", order.id(), order.total());
+    }
+}
+
+@Service
+public class OrderService {
+    public void placeOrder(Order order) {
+        try {
+            repo.save(order);
+        } catch (DataAccessException e) {  // works for PostgreSQL, Mongo, DynamoDB — anything
+            throw new ServiceException("DB error", e);
+        }
+    }
+}
+```
+
+The service layer catches a Spring type, not a driver type. You can swap PostgreSQL for MongoDB without touching `OrderService`. That is the contract `@Repository` enforces.
+
+---
+
+## Three Styles of Dependency Injection
+
+Once your classes are registered as beans, Spring needs to know how to wire them together. There are three injection styles, and they have meaningfully different trade-offs.
+
+### Field Injection — avoid this
+
+```java
+@Service
+public class OrderService {
+    @Autowired
+    private OrderRepository repo;   // injected directly into the field
+
+    @Autowired
+    private PaymentGateway payment;
+}
+```
+
+This works, but it has a serious problem: the dependencies are **invisible from the outside**. To write a unit test for `OrderService`, you need a Spring context to inject the fields — you can't just call `new OrderService()` and pass in mocks. The class looks self-contained but secretly requires external wiring.
+
+There's also no way to make the fields `final`, which means something could theoretically reassign them after construction.
+
+### Setter Injection — for optional dependencies
+
+```java
+@Service
+public class NotificationService {
+    private EmailClient emailClient;
+
+    @Autowired(required = false)   // this bean might not exist at all
+    public void setEmailClient(EmailClient client) {
+        this.emailClient = client;
+    }
+
+    public void notify(String userId, String message) {
+        if (emailClient != null) {
+            emailClient.send(userId, message);
+        }
+        // still works without it — falls back silently
+    }
+}
+```
+
+Use setter injection when a dependency is genuinely optional — the class functions correctly even if the bean is absent. The `required = false` signals that Spring should inject if the bean exists, and skip it otherwise.
+
+### Constructor Injection — always prefer this
+
+```java
+@Service
+public class OrderService {
+    private final OrderRepository repo;
+    private final PaymentGateway payment;
+
+    // @Autowired is optional when there is only one constructor (Spring 4.3+)
+    public OrderService(OrderRepository repo, PaymentGateway payment) {
+        this.repo = repo;
+        this.payment = payment;
+    }
+}
+```
+
+Three reasons this is the right default:
+
+**Explicit contract.** Every dependency is visible at a glance — in the constructor signature. There are no hidden fields. A reader understands the full requirements of the class without reading the body.
+
+**Immutability.** The fields can be `final`. Once the constructor runs, nothing reassigns them. Thread-safe by construction.
+
+**Testable without Spring.** You can instantiate the class directly in a unit test:
+
+```java
+@Test
+void placingAnOrderSavesItAndChargesPayment() {
+    var repo    = mock(OrderRepository.class);
+    var payment = mock(PaymentGateway.class);
+    var service = new OrderService(repo, payment);  // no Spring context needed
+
+    service.placeOrder(new Order("ord-1", new BigDecimal("59.99")));
+
+    verify(repo).save(any());
+    verify(payment).charge(new BigDecimal("59.99"));
+}
+```
+
+This test runs in milliseconds. No application context, no embedded server, no database. That's what constructor injection buys you.
+
+---
+
+## Bean Scopes
+
+Scope controls how many instances Spring creates of a bean and how long they live.
+
+| Scope | Annotation | Instances created | Lifetime |
+|---|---|---|---|
+| Singleton | default (or `@Scope("singleton")`) | 1 per Spring container | Application lifetime |
+| Prototype | `@Scope("prototype")` | 1 per injection point | Until garbage collected |
+| Request | `@RequestScope` | 1 per HTTP request | HTTP request lifetime |
+| Session | `@SessionScope` | 1 per HTTP session | HTTP session lifetime |
+
+Choosing the wrong scope is one of the most common Spring bugs. A singleton that accumulates request-specific state will bleed data between users. A prototype that holds an expensive connection pool will exhaust resources. Getting this right is not optional.
+
+---
+
+## Real-World Beans and Their Correct Scopes
+
+### RDBMS Connection Pool — Singleton
+
+A connection pool like HikariCP is expensive to create: it opens N real TCP connections to the database at startup. It is also completely **thread-safe by design** — that is its entire purpose. Multiple threads borrow connections, use them, and return them to the pool concurrently.
+
+There should be exactly one pool for the entire application lifetime.
+
+```java
+@Configuration
+public class DatabaseConfig {
+
+    @Bean   // singleton by default — one pool, shared by all threads
+    public DataSource dataSource() {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://localhost:5432/orders");
+        config.setUsername("app");
+        config.setPassword("secret");
+        config.setMaximumPoolSize(20);           // 20 connections shared across all threads
+        config.setMinimumIdle(5);
+        config.setConnectionTimeout(30_000);
+        config.setIdleTimeout(600_000);
+        return new HikariDataSource(config);
+    }
+}
+```
+
+In practice, Spring Boot auto-configures this from `application.properties`. You only write this bean manually when you need to tune pool settings beyond what the properties allow — read replicas, separate pools per schema, or custom metrics.
+
+`JdbcTemplate`, which wraps `DataSource`, is also a singleton. It holds no state of its own — it delegates to the `DataSource` for connections — so one instance shared across all threads is correct.
+
+### AWS S3 Client — Singleton
+
+The AWS SDK v2 `S3Client` is **thread-safe** and manages its own internal HTTP connection pool. Creating a new `S3Client` per request is one of the most common performance mistakes in Spring Boot AWS integrations — each instance opens new connections and sets up new thread pools, burning resources for every request.
+
+```java
+@Configuration
+public class AwsConfig {
+
+    @Bean   // singleton — one S3Client for the entire application
+    public S3Client s3Client() {
+        return S3Client.builder()
+            .region(Region.EU_WEST_1)
+            .credentialsProvider(DefaultCredentialsChain.create())
+            // DefaultCredentialsChain tries: env vars → system properties → ~/.aws/credentials → IAM role
+            .build();
+    }
+}
+
+@Service
+public class FileStorageService {
+    private final S3Client s3;
+    private static final String BUCKET = "my-app-uploads";
+
+    public FileStorageService(S3Client s3) {
+        this.s3 = s3;
+    }
+
+    public String upload(String key, InputStream data, long contentLength) {
+        s3.putObject(
+            PutObjectRequest.builder()
+                .bucket(BUCKET)
+                .key(key)
+                .contentLength(contentLength)
+                .build(),
+            RequestBody.fromInputStream(data, contentLength)
+        );
+        return "s3://%s/%s".formatted(BUCKET, key);
+    }
+
+    public InputStream download(String key) {
+        return s3.getObject(
+            GetObjectRequest.builder().bucket(BUCKET).key(key).build()
+        );
+    }
+}
+```
+
+In production on EC2 or ECS, `DefaultCredentialsChain` picks up the IAM role attached to the instance or task automatically. No credentials in code or environment variables.
+
+### AWS DynamoDB Client — Singleton
+
+Same reasoning as S3. Every AWS SDK v2 client is thread-safe and manages internal HTTP connections. One singleton shared across all service calls is the correct pattern.
+
+```java
+@Bean   // singleton
+public DynamoDbClient dynamoDbClient() {
+    return DynamoDbClient.builder()
+        .region(Region.EU_WEST_1)
+        .credentialsProvider(DefaultCredentialsChain.create())
+        .build();
+}
+
+@Repository
+public class SessionRepository {
+    private final DynamoDbClient dynamo;
+    private static final String TABLE = "user-sessions";
+
+    public SessionRepository(DynamoDbClient dynamo) {
+        this.dynamo = dynamo;
+    }
+
+    public void save(String sessionId, String userId, Instant expiresAt) {
+        dynamo.putItem(PutItemRequest.builder()
+            .tableName(TABLE)
+            .item(Map.of(
+                "sessionId", AttributeValue.fromS(sessionId),
+                "userId",    AttributeValue.fromS(userId),
+                "ttl",       AttributeValue.fromN(String.valueOf(expiresAt.getEpochSecond()))
+            ))
+            .build());
+    }
+
+    public Optional<String> findUserId(String sessionId) {
+        var response = dynamo.getItem(GetItemRequest.builder()
+            .tableName(TABLE)
+            .key(Map.of("sessionId", AttributeValue.fromS(sessionId)))
+            .build());
+
+        return response.hasItem()
+            ? Optional.of(response.item().get("userId").s())
+            : Optional.empty();
+    }
+}
+```
+
+The `ttl` field is a DynamoDB TTL attribute — when the epoch second passes, DynamoDB automatically deletes the item. This is the standard pattern for session expiry.
+
+### The AWS Config as a Module
+
+In practice, all your AWS clients live in one `@Configuration` class:
+
+```java
+@Configuration
+public class AwsConfig {
+
+    @Bean
+    public S3Client s3Client() { ... }
+
+    @Bean
+    public DynamoDbClient dynamoDbClient() { ... }
+
+    @Bean
+    public SqsClient sqsClient() {
+        return SqsClient.builder()
+            .region(Region.EU_WEST_1)
+            .credentialsProvider(DefaultCredentialsChain.create())
+            .build();
+    }
+
+    @Bean
+    public SecretsManagerClient secretsManagerClient() {
+        return SecretsManagerClient.builder()
+            .region(Region.EU_WEST_1)
+            .credentialsProvider(DefaultCredentialsChain.create())
+            .build();
+    }
+}
+```
+
+All singletons. All thread-safe. All use the same credentials chain. This is the entire AWS wiring for a typical Spring Boot microservice.
+
+### Report Builder — Prototype
+
+`ReportBuilder` is different from everything above. It **accumulates state** — rows, totals, formatting options — as you build a report. If you made it a singleton, two concurrent requests would be writing to the same instance. The data would be mixed together, and neither report would be correct.
+
+```java
+@Component
+@Scope("prototype")   // new instance every time
+public class ReportBuilder {
+    private final List<String> rows = new ArrayList<>();
+    private String title = "Report";
+
+    public ReportBuilder title(String title) {
+        this.title = title;
+        return this;
+    }
+
+    public ReportBuilder addRow(String row) {
+        rows.add(row);
+        return this;
+    }
+
+    public String build() {
+        var sb = new StringBuilder();
+        sb.append("=== ").append(title).append(" ===\n");
+        rows.forEach(row -> sb.append(row).append("\n"));
+        return sb.toString();
+    }
+}
+```
+
+There is a subtlety here that catches many Spring developers off guard. If you inject a prototype bean into a singleton with `@Autowired`, you get **one prototype instance for the singleton's entire life** — the prototype is only created once, when the singleton is constructed. That defeats the purpose.
+
+```java
+@Service
+public class ReportService {
+
+    // WRONG — @Autowired gives you one ReportBuilder instance for the lifetime of ReportService
+    @Autowired
+    private ReportBuilder builder;  // never reset between calls — state leaks
+}
+```
+
+The correct approach is to ask Spring for a new instance each time, using `ObjectProvider`:
+
+```java
+@Service
+public class ReportService {
+    private final ObjectProvider<ReportBuilder> builderProvider;
+
+    public ReportService(ObjectProvider<ReportBuilder> builderProvider) {
+        this.builderProvider = builderProvider;
+    }
+
+    public String generateReport(List<Order> orders) {
+        ReportBuilder builder = builderProvider.getObject(); // fresh instance every call
+        builder.title("Order Report");
+        orders.forEach(o -> builder.addRow("%s — £%s".formatted(o.id(), o.total())));
+        return builder.build();
+    }
+}
+```
+
+`ObjectProvider.getObject()` asks the container for a new prototype bean. Every call to `generateReport` gets its own clean `ReportBuilder`.
+
+### Request-Scoped Bean — Per HTTP Request
+
+Some data belongs to a single HTTP request: the authenticated user's ID, a distributed trace ID, request-level audit information. Rather than threading this through every method parameter, Spring can manage it as a request-scoped bean.
+
+```java
+@Component
+@RequestScope   // new instance per HTTP request, destroyed when the request completes
+public class RequestContext {
+    private String userId;
+    private String traceId;
+
+    // getters and setters
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
+    public String getTraceId() { return traceId; }
+    public void setTraceId(String traceId) { this.traceId = traceId; }
+}
+```
+
+Populate it once at the request boundary — typically in a filter or interceptor:
+
+```java
+@Component
+public class AuthFilter implements Filter {
+    private final RequestContext ctx;
+
+    public AuthFilter(RequestContext ctx) {
+        this.ctx = ctx;
+    }
+
+    @Override
+    public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+            throws IOException, ServletException {
+        HttpServletRequest httpReq = (HttpServletRequest) req;
+        ctx.setUserId(extractUserIdFromJwt(httpReq.getHeader("Authorization")));
+        ctx.setTraceId(
+            Optional.ofNullable(httpReq.getHeader("X-Trace-Id"))
+                .orElse(UUID.randomUUID().toString())
+        );
+        chain.doFilter(req, res);
+    }
+}
+```
+
+Now any bean anywhere in the request's call stack can read this context without it being passed as a parameter:
+
+```java
+@Service
+public class AuditService {
+    private final RequestContext ctx;
+    private final DynamoDbClient dynamo;
+
+    public AuditService(RequestContext ctx, DynamoDbClient dynamo) {
+        this.ctx = ctx;
+        this.dynamo = dynamo;
+    }
+
+    public void record(String action, String resourceId) {
+        dynamo.putItem(PutItemRequest.builder()
+            .tableName("audit-log")
+            .item(Map.of(
+                "traceId",    AttributeValue.fromS(ctx.getTraceId()),
+                "userId",     AttributeValue.fromS(ctx.getUserId()),
+                "action",     AttributeValue.fromS(action),
+                "resourceId", AttributeValue.fromS(resourceId),
+                "timestamp",  AttributeValue.fromS(Instant.now().toString())
+            ))
+            .build());
+    }
+}
+```
+
+`ctx.getUserId()` and `ctx.getTraceId()` return the values set at the start of *this specific request* — not another user's data from a concurrent request. Spring manages a separate `RequestContext` instance per request thread.
+
+---
+
+## The Prototype-in-Singleton Trap, Visualised
+
+This is the mistake worth spending a moment on. It trips people up because it compiles and runs without error — it just silently produces wrong results.
+
+```java
+// Singleton (default)                   // Prototype
+@Service                                 @Component
+public class ReportService {             @Scope("prototype")
+                                         public class ReportBuilder {
+    @Autowired                               private List<String> rows = new ArrayList<>();
+    private ReportBuilder builder;           // ...
+    //                                   }
+    // Spring creates ReportService ONCE.
+    // At that moment, it creates ONE ReportBuilder and assigns it here.
+    // Every call to generateReport() shares the same builder.
+    // Rows accumulate across all requests. Never cleared.
+}
+```
+
+The container honoured `@Scope("prototype")` by creating a new instance — but only once, when the singleton was constructed. After that, the singleton holds a direct reference to that one instance forever. `ObjectProvider` is the fix because it defers the creation to call time, not construction time.
+
+---
+
+## Scope Decision Table for Common Beans
+
+| Bean | Correct scope | Reason |
+|---|---|---|
+| `DataSource` / HikariCP | Singleton | Thread-safe pool, expensive to create |
+| `JdbcTemplate` | Singleton | Stateless wrapper — delegates to `DataSource` |
+| `S3Client` | Singleton | Thread-safe, internal HTTP pool |
+| `DynamoDbClient` | Singleton | Thread-safe, internal HTTP pool |
+| `SqsClient` | Singleton | Thread-safe, internal HTTP pool |
+| `SecretsManagerClient` | Singleton | Thread-safe, internal HTTP pool |
+| `RestTemplate` / `WebClient` | Singleton | Thread-safe HTTP client |
+| `ObjectMapper` (Jackson) | Singleton | Thread-safe after configuration |
+| `ReportBuilder` | Prototype | Accumulates per-report state |
+| `EmailComposer` | Prototype | Builds a single message, not reusable |
+| `RequestContext` | Request | Per-request user/trace data |
+| `SecurityContext` | Request | Per-request authentication |
+| `ShoppingCart` | Session | Per-user session state |
+| `UserPreferences` | Session | Per-user session state |
+
+The deciding questions are: **Is it thread-safe?** If yes, singleton. **Does it accumulate state that must be isolated?** If per-call, prototype. If per-request, request scope. If per-user, session scope.
+
+---
+
+## Putting It All Together
+
+Here is a realistic Spring Boot service that uses every concept from this post:
+
+```java
+@Configuration
+public class InfrastructureConfig {
+
+    @Bean
+    public DataSource dataSource() {
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl(System.getenv("DB_URL"));
+        cfg.setMaximumPoolSize(20);
+        return new HikariDataSource(cfg);
+    }
+
+    @Bean
+    public S3Client s3Client() {
+        return S3Client.builder()
+            .region(Region.EU_WEST_1)
+            .credentialsProvider(DefaultCredentialsChain.create())
+            .build();
+    }
+
+    @Bean
+    public DynamoDbClient dynamoDbClient() {
+        return DynamoDbClient.builder()
+            .region(Region.EU_WEST_1)
+            .credentialsProvider(DefaultCredentialsChain.create())
+            .build();
+    }
+}
+
+@Component
+@RequestScope
+public class RequestContext {
+    private String userId;
+    private String traceId;
+    // getters/setters
+}
+
+@Component
+@Scope("prototype")
+public class InvoiceBuilder {
+    private final List<LineItem> items = new ArrayList<>();
+    public InvoiceBuilder addItem(LineItem item) { items.add(item); return this; }
+    public Invoice build() { return new Invoice(items); }
+}
+
+@Repository
+public class OrderRepository {
+    private final JdbcTemplate jdbc;
+    public OrderRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public List<Order> findByUserId(String userId) {
+        return jdbc.query(
+            "SELECT * FROM orders WHERE user_id = ?",
+            (rs, i) -> new Order(rs.getString("id"), rs.getBigDecimal("total")),
+            userId
+        );
+    }
+}
+
+@Service
+public class InvoiceService {
+    private final OrderRepository orders;
+    private final S3Client s3;
+    private final RequestContext ctx;
+    private final ObjectProvider<InvoiceBuilder> builderProvider;
+
+    public InvoiceService(
+            OrderRepository orders,
+            S3Client s3,
+            RequestContext ctx,
+            ObjectProvider<InvoiceBuilder> builderProvider) {
+        this.orders = orders;
+        this.s3 = s3;
+        this.ctx = ctx;
+        this.builderProvider = builderProvider;
+    }
+
+    public String generateAndUploadInvoice() {
+        // Fetch orders for the current user (from request-scoped context)
+        List<Order> userOrders = orders.findByUserId(ctx.getUserId());
+
+        // Build the invoice using a fresh prototype builder
+        InvoiceBuilder builder = builderProvider.getObject();
+        userOrders.stream()
+            .map(o -> new LineItem(o.id(), o.total()))
+            .forEach(builder::addItem);
+        Invoice invoice = builder.build();
+
+        // Upload to S3 using the singleton client
+        String key = "invoices/%s/%s.pdf".formatted(ctx.getUserId(), ctx.getTraceId());
+        byte[] pdf = invoice.toPdf();
+        s3.putObject(
+            PutObjectRequest.builder().bucket("invoices").key(key).build(),
+            RequestBody.fromBytes(pdf)
+        );
+
+        return key;
+    }
+}
+```
+
+Every bean here has the right scope:
+- `DataSource`, `S3Client`, `DynamoDbClient` — singletons because they are thread-safe and expensive
+- `JdbcTemplate`, `OrderRepository`, `InvoiceService` — singletons because they are stateless
+- `RequestContext` — request scope because it holds per-request user identity
+- `InvoiceBuilder` — prototype because it accumulates per-invoice state, retrieved via `ObjectProvider`
+
+---
+
+## The Mental Model
+
+Spring's IoC container is a graph builder. At startup, it reads your class definitions, resolves dependency edges between them, and constructs the graph in dependency order. By the time your code runs, the graph is complete and every edge is wired.
+
+Scope is the answer to one question: **how many nodes of this type should the graph have, and when do they appear and disappear?**
+
+Singleton means one node, permanent. Prototype means a new node on demand, discarded after use. Request means one node per HTTP request thread, cleaned up when the request completes. Session means one node per user session, cleaned up on logout or timeout.
+
+Get the scope right, and your application is thread-safe, memory-efficient, and predictable. Get it wrong, and you get bugs that only appear under concurrent load — exactly the kind that are hardest to reproduce and debug in production.
+
+---
+
+Peace... 🍀
