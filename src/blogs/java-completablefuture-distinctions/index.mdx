@@ -307,9 +307,145 @@ In practice: use `join()` in most production code — it produces cleaner call s
 
 ---
 
+## 6. Cancellation: C#'s `CancellationToken` in Java
+
+C# has a first-class cancellation primitive baked into the language:
+
+```csharp
+var cts = new CancellationTokenSource();
+CancellationToken token = cts.Token;
+
+Task.Run(() => {
+    for (int i = 0; i < 10; i++) {
+        token.ThrowIfCancellationRequested();  // cooperative check
+        Thread.Sleep(100);
+    }
+    return FetchProduct("p1");
+}, token);
+
+cts.Cancel();  // signal cancellation from outside
+```
+
+`CompletableFuture` has no equivalent type. There is no `CancellationToken` you pass around. But the same patterns are achievable — they are just less automatic.
+
+### Pattern 1: `future.cancel(true)` — cancelling the future itself
+
+```java
+CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(1000);
+    return new Product("p1", "Laptop", new BigDecimal("999.99"), "Electronics", true);
+});
+
+future.cancel(true);  // cts.Cancel() equivalent at the Future level
+
+System.out.println(future.isCancelled());  // true
+future.join();  // throws CancellationException
+```
+
+**The important caveat:** `cancel(true)` marks the `CompletableFuture` as cancelled and prevents any downstream `.thenApply` / `.thenCompose` chains from running. But the `supplyAsync` lambda that is already running in the ForkJoinPool thread is **not interrupted** — it keeps running to completion, its result is just discarded.
+
+The `true` argument (`mayInterruptIfRunning`) is a holdover from `Future<T>`. With `CompletableFuture`, it is effectively ignored for `supplyAsync` tasks.
+
+### Pattern 2: Cooperative cancellation with `AtomicBoolean` — the real `CancellationToken`
+
+This is the direct equivalent of C#'s cooperative model:
+
+```java
+// C#:  var cts = new CancellationTokenSource();
+//      CancellationToken token = cts.Token;
+AtomicBoolean cancelled = new AtomicBoolean(false);  // the "CancellationToken"
+
+CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> {
+    for (int i = 1; i <= 10; i++) {
+        if (cancelled.get()) {                        // token.ThrowIfCancellationRequested()
+            System.out.println("  [worker] cancellation detected at step " + i + " — stopping");
+            throw new CancellationException("Task cancelled by caller");
+        }
+        simulateDelay(100);
+        System.out.println("  [worker] step " + i + " complete");
+    }
+    return new Product("p1", "Laptop", new BigDecimal("999.99"), "Electronics", true);
+});
+
+simulateDelay(350);               // steps 1, 2, 3 finish in ~300ms
+System.out.println("[main] signalling cancellation...");
+cancelled.set(true);              // cts.Cancel()
+
+String result = future
+    .thenApply(p -> "Completed: " + p.name())
+    .exceptionally(ex -> "Cancelled — reason: " + ex.getCause().getMessage())
+    .join();
+
+System.out.println("[main] outcome: " + result);
+```
+
+Expected output:
+```
+  [worker] step 1 complete
+  [worker] step 2 complete
+  [worker] step 3 complete
+[main] signalling cancellation...
+  [worker] cancellation detected at step 4 — stopping
+[main] outcome: Cancelled — reason: Task cancelled by caller
+```
+
+The `AtomicBoolean` is your `CancellationToken`. Any number of tasks can share a reference to the same flag — cancel it once and all of them stop at their next check. That is exactly how linked `CancellationTokenSource` works in C#.
+
+### Pattern 3: `orTimeout` — `CancellationTokenSource(TimeSpan)` equivalent
+
+C# lets you create a token that cancels itself after a delay:
+
+```csharp
+var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+```
+
+Java 9+ has `orTimeout`:
+
+```java
+CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(1000);  // takes 1s
+    return new Product("p1", "Laptop", new BigDecimal("999.99"), "Electronics", true);
+})
+.orTimeout(500, TimeUnit.MILLISECONDS);  // deadline: 500ms
+
+future.exceptionally(ex -> {
+    System.out.println(ex.getClass().getSimpleName());  // TimeoutException
+    return new Product("none", "Timed out", BigDecimal.ZERO, "N/A", false);
+}).join();
+```
+
+If the future does not complete within 500ms, it completes exceptionally with a `TimeoutException`. The underlying thread is still running — same caveat as `cancel(true)`.
+
+If you want a default value instead of an exception, use `completeOnTimeout`:
+
+```java
+CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(1000);
+    return new Product("p1", "Laptop", new BigDecimal("999.99"), "Electronics", true);
+})
+.completeOnTimeout(
+    new Product("cached", "Cached Result", new BigDecimal("999.99"), "Electronics", true),
+    500, TimeUnit.MILLISECONDS
+);
+
+System.out.println(future.join().name());  // "Cached Result" — no exception thrown
+```
+
+| C# concept | Java equivalent | Stops the thread? |
+|---|---|---|
+| `cts.Cancel()` on the future | `future.cancel(true)` | No — discards result only |
+| `token.ThrowIfCancellationRequested()` | `if (cancelled.get()) throw new CancellationException()` | Yes — cooperative |
+| `CancellationTokenSource(TimeSpan)` | `future.orTimeout(ms, MILLISECONDS)` | No — throws `TimeoutException` |
+| Timeout with fallback | `future.completeOnTimeout(defaultVal, ms, MILLISECONDS)` | No — provides default instead |
+| Linked tokens | Shared `AtomicBoolean` reference across multiple lambdas | Yes — cooperative |
+
+The gap between C# and Java here is real. C# tokens are composable, propagate automatically through the call stack, and integrate with `async`/`await` natively. In Java, you wire the `AtomicBoolean` manually. It is more work, but the behaviour is identical — both rely on the running code choosing to check and stop.
+
+---
+
 ## The Pattern Underneath
 
-All five distinctions follow the same shape: two methods that solve the same surface problem but differ in one specific dimension.
+All the distinctions follow the same shape: two methods (or approaches) that solve the same surface problem but differ in one specific dimension.
 
 | Pair | The dimension that differs |
 |---|---|
@@ -318,6 +454,7 @@ All five distinctions follow the same shape: two methods that solve the same sur
 | `allOf` vs `anyOf` | All complete vs first completes |
 | `exceptionally` vs `handle` | Failure only vs both paths |
 | `get` vs `join` | Checked vs unchecked exceptions |
+| `cancel(true)` vs `AtomicBoolean` | Discard result vs cooperative stop |
 
 When you pick the wrong method, the compiler often won't stop you — the types still work out, or you accept a looser type like `Object`. The bug only shows up at runtime: a `[Not completed]` in the output, a future result that's never read, or an exception that's swallowed silently.
 
