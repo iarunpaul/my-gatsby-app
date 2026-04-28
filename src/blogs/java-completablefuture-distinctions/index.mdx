@@ -1,0 +1,328 @@
+---
+title: "Java CompletableFuture: The Distinctions That Actually Matter"
+description: "A hands-on breakdown of the API pairs in CompletableFuture that look similar but behave very differently — thenApply vs thenCompose, thenCombine vs thenCompose, allOf vs anyOf, exceptionally vs handle, and get vs join."
+date: "2026-04-28"
+tags: ["java", "completable-future", "concurrency", "async", "java17"]
+slug: "java-completablefuture-distinctions"
+featured: true
+type: "article"
+---
+
+# Java CompletableFuture: The Distinctions That Actually Matter
+
+`CompletableFuture` has a large API surface, and most of it is fine. But there are a handful of method pairs that look interchangeable until you swap one for the other and watch your program print something like:
+
+```
+Chained async result: java.util.concurrent.CompletableFuture@1fb3ebeb[Not completed]
+```
+
+That is the output you get when you use `thenApply` where you needed `thenCompose`. It is a real output from a real mistake, and it points at a pattern that repeats across several other places in the API.
+
+This post covers all of them. Same code, wrong method, clear explanation of what went wrong and why.
+
+---
+
+## The Demo Setup
+
+All the examples below use a simple `Product` record and a helper to simulate slow I/O:
+
+```java
+record Product(String id, String name, BigDecimal price, String category, boolean inStock) {}
+
+static void simulateDelay(int ms) {
+    try {
+        TimeUnit.MILLISECONDS.sleep(ms);
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+    }
+}
+```
+
+---
+
+## 1. `thenApply` vs `thenCompose`
+
+This is the one that produces the `[Not completed]` output.
+
+Both methods let you chain something onto a `CompletableFuture` once it resolves. The difference is what your callback returns.
+
+### `thenApply` — your callback returns a plain value
+
+```java
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+})
+.thenApply(product -> product.name().toUpperCase());  // String → String
+// type: CompletableFuture<String> ✓
+```
+
+`thenApply` is a synchronous transform. Your lambda takes a `T` and returns an `R`. The `CompletableFuture` wraps that `R` for you. Think of it as `.map()` on a stream — you are transforming the value, not starting new async work.
+
+### `thenCompose` — your callback returns a `CompletableFuture`
+
+```java
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+})
+.thenCompose(product -> CompletableFuture.supplyAsync(() -> {
+    simulateDelay(200);
+    return "Reviews for %s: ★★★★☆".formatted(product.name());
+}));
+// type: CompletableFuture<String> ✓ — the inner future is unwrapped
+```
+
+`thenCompose` is for when the next step is itself async. Your lambda takes a `T` and returns a `CompletableFuture<R>`. `thenCompose` unwraps that inner future and returns a flat `CompletableFuture<R>` — not a nested `CompletableFuture<CompletableFuture<R>>`. Think of it as `.flatMap()`.
+
+### What happens when you use `thenApply` with an async callback
+
+```java
+// WRONG — accidentally used thenApply instead of thenCompose
+CompletableFuture<Object> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+})
+.thenApply(product -> CompletableFuture.supplyAsync(() -> {  // returns a Future, not a String
+    simulateDelay(200);
+    return "Reviews for %s: ★★★★☆".formatted(product.name());
+}));
+
+System.out.println(future.join());
+// Output: java.util.concurrent.CompletableFuture@1fb3ebeb[Not completed]
+```
+
+The outer future completes immediately — its value is the *inner* `CompletableFuture` object, which hasn't run yet. When you call `.join()` and print the result, Java calls `.toString()` on that inner future. Nobody waits for it. You get the object reference, not the string you wanted.
+
+The actual type here is `CompletableFuture<CompletableFuture<String>>`. The nested `[Not completed]` in the output is the tell.
+
+| | `thenApply` | `thenCompose` |
+|---|---|---|
+| Callback returns | `R` (a value) | `CompletableFuture<R>` (a new async step) |
+| Result type | `CompletableFuture<R>` | `CompletableFuture<R>` (unwrapped) |
+| C# analogy | `.ContinueWith(t => t.Result.Name)` | `await (await FetchProductAsync()).FetchReviewsAsync()` |
+| Stream analogy | `map` | `flatMap` |
+| Use when | transforming the result synchronously | the next step is itself async |
+
+---
+
+## 2. `thenCompose` vs `thenCombine`
+
+Both deal with chaining multiple futures, but they answer different questions.
+
+### `thenCompose` — second operation needs the result of the first (dependent)
+
+```java
+// Step 2 can't start until step 1 finishes — we need the product to fetch its reviews
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+})
+.thenCompose(product -> CompletableFuture.supplyAsync(() -> {
+    simulateDelay(200);
+    return "Reviews for %s: ★★★★☆".formatted(product.name());
+}));
+// Total time: 300ms + 200ms = 500ms (sequential by necessity)
+```
+
+The two operations run sequentially because they have to. The review fetch needs the product object.
+
+### `thenCombine` — two independent operations running in parallel, results merged at the end
+
+```java
+// Product details and live price have no dependency on each other — run them simultaneously
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    System.out.println("Fetching product details...");
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+})
+.thenCombine(
+    CompletableFuture.supplyAsync(() -> {
+        simulateDelay(200);
+        System.out.println("Fetching live price...");
+        return new BigDecimal("1799.99");
+    }),
+    (product, price) -> "%s costs £%s".formatted(product.name(), price)
+);
+// Total time: max(300ms, 200ms) = 300ms (parallel)
+```
+
+Both futures start at the same time. `thenCombine` waits for both to finish, then calls your merge function with both results. No dependency between them — no reason to serialize them.
+
+| | `thenCompose` | `thenCombine` |
+|---|---|---|
+| Relationship | Step 2 depends on step 1's result | Two independent operations |
+| Execution | Sequential | Parallel |
+| Total latency | Sum of both | Max of both |
+| C# analogy | `var r = await FetchReviewsAsync(await FetchProductAsync())` | `await Task.WhenAll(t1, t2)` then combine `t1.Result` and `t2.Result` |
+| Use when | You need the first result to start the second | Two calls have no dependency |
+
+---
+
+## 3. `allOf` vs `anyOf`
+
+Both take multiple futures. What they wait for is completely different.
+
+### `allOf` — wait for every future to complete
+
+```java
+CompletableFuture<Product> t1 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return new Product("p1", "Laptop", new BigDecimal("999.99"), "Electronics", true);
+});
+CompletableFuture<Product> t2 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(200);
+    return new Product("p2", "Desktop", new BigDecimal("1999.99"), "Electronics", true);
+});
+CompletableFuture<Product> t3 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(400);
+    return new Product("p3", "Tablet", new BigDecimal("499.99"), "Electronics", true);
+});
+
+CompletableFuture<Void> all = CompletableFuture.allOf(t1, t2, t3);
+all.join();  // waits for all three — 400ms total
+
+System.out.println("- " + t1.join().name());  // safe — already done
+System.out.println("- " + t2.join().name());
+System.out.println("- " + t3.join().name());
+```
+
+`allOf` returns `CompletableFuture<Void>` — note the `Void`. It tells you when everything finished, but it does not hand you the results. You have to call `.join()` on each individual future yourself afterwards. Since `allOf` already waited, those `.join()` calls are instant — no thread blocking.
+
+### `anyOf` — take the first future that completes, ignore the rest
+
+```java
+CompletableFuture<String> t1 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    return "Result from source 1";
+});
+CompletableFuture<String> t2 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(200);
+    return "Result from source 2";  // fastest — wins
+});
+CompletableFuture<String> t3 = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(400);
+    return "Result from source 3";
+});
+
+CompletableFuture<Object> any = CompletableFuture.anyOf(t1, t2, t3);
+System.out.println(any.join());
+// Output: Result from source 2
+```
+
+`anyOf` returns `CompletableFuture<Object>` — the type is erased because the futures don't have to be the same type. As soon as any one of them completes, `anyOf` completes with that result. The other futures keep running in the background — there is no automatic cancellation.
+
+The classic use case: query multiple data sources or regional endpoints in parallel and use whichever responds first.
+
+| | `allOf` | `anyOf` |
+|---|---|---|
+| Completes when | Every future is done | The first future finishes |
+| Return type | `CompletableFuture<Void>` | `CompletableFuture<Object>` |
+| Results | Retrieved individually from each future after join | Directly from `.join()` |
+| C# analogy | `await Task.WhenAll(t1, t2, t3)` | `var winner = await Task.WhenAny(t1, t2, t3)` |
+| Use when | You need all results before proceeding | You want the fastest response from N sources |
+
+---
+
+## 4. `exceptionally` vs `handle`
+
+Both let you respond to a failed future. The difference is whether you also see successful results.
+
+### `exceptionally` — runs only on failure, acts as a fallback
+
+```java
+CompletableFuture<Product> future = CompletableFuture.supplyAsync(() -> {
+    simulateDelay(300);
+    if (Math.random() < 0.5) {
+        throw new RuntimeException("Simulated failure fetching product");
+    }
+    return new Product("p3", "Tablet", new BigDecimal("499.99"), "Electronics", true);
+})
+.exceptionally(ex -> {
+    System.out.println("Error: " + ex.getMessage());
+    return new Product("default", "Default Product", BigDecimal.ZERO, "Unknown", false);
+});
+
+System.out.println("Result: " + future.join().name());
+```
+
+`exceptionally` is the recovery lane. If the upstream future succeeds, it is skipped entirely. If it fails, your function receives the exception and must return a fallback value of the same type. Think of it as a `catch` block that produces a default.
+
+### `handle` — runs on both success and failure
+
+```java
+CompletableFuture<Product> future = CompletableFuture
+    .supplyAsync(() -> new Product("p5", "Phone", new BigDecimal("699.00"), "Electronics", true))
+    .handle((product, ex) -> {
+        if (ex != null) {
+            return new Product("fallback", "Error", BigDecimal.ZERO, "N/A", false);
+        }
+        return product;  // success path — product is non-null, ex is null
+    });
+```
+
+`handle` always runs — success or failure. Your function receives both the result and the exception, and exactly one of them will be non-null. This makes it the right tool when you want to transform or log the result regardless of whether the upstream succeeded, or when you want a single place to handle both paths.
+
+One important detail: unlike `exceptionally`, `handle` can also *change* the success result. You are not limited to returning a fallback — you can map the successful value at the same time.
+
+| | `exceptionally` | `handle` |
+|---|---|---|
+| Runs when | Failure only | Always (success and failure) |
+| Receives | `Throwable ex` | `(T result, Throwable ex)` — one is always null |
+| Can transform success? | No | Yes |
+| C# analogy | `catch { return fallback; }` | `try { ... } catch { ... }` with shared return |
+| Use when | Simple fallback on failure | Logging both paths, or transforming success and failure in one place |
+
+---
+
+## 5. `get()` vs `join()`
+
+Both block the current thread until the future completes and return the result. The difference is purely about exception handling.
+
+```java
+// get() — from Future<T>, throws checked exceptions
+try {
+    Product p = future.get();
+} catch (InterruptedException | ExecutionException e) {
+    // you are forced to handle these
+}
+
+// join() — from CompletableFuture<T>, wraps in unchecked CompletionException
+Product p = future.join();  // no try-catch required by the compiler
+```
+
+`get()` is inherited from the `Future<T>` interface. It forces you to handle `InterruptedException` (thread was interrupted while waiting) and `ExecutionException` (the async task threw an exception — unwrap with `ex.getCause()`).
+
+`join()` is `CompletableFuture`-specific. If the future failed, it wraps the cause in an unchecked `CompletionException`. If the thread is interrupted, it throws `CancellationException` rather than `InterruptedException`.
+
+In practice: use `join()` in most production code — it produces cleaner call sites. Use `get()` when you specifically want the `InterruptedException` to be checked, typically in lower-level concurrent utilities where you need to respond to thread interruption explicitly.
+
+| | `get()` | `join()` |
+|---|---|---|
+| Exception type | `InterruptedException`, `ExecutionException` (checked) | `CompletionException` (unchecked) |
+| Compiler forces try-catch? | Yes | No |
+| Unwrapping failures | `ex.getCause()` | `ex.getCause()` on `CompletionException` |
+| C# analogy | `task.Result` (blocks, throws `AggregateException`) | Same, but cleaner — no analogue distinction in C# |
+| Use when | You need checked exception handling at the call site | General use — less boilerplate |
+
+---
+
+## The Pattern Underneath
+
+All five distinctions follow the same shape: two methods that solve the same surface problem but differ in one specific dimension.
+
+| Pair | The dimension that differs |
+|---|---|
+| `thenApply` vs `thenCompose` | Sync transform vs async chain (wrapping vs flattening) |
+| `thenCompose` vs `thenCombine` | Dependent (sequential) vs independent (parallel) |
+| `allOf` vs `anyOf` | All complete vs first completes |
+| `exceptionally` vs `handle` | Failure only vs both paths |
+| `get` vs `join` | Checked vs unchecked exceptions |
+
+When you pick the wrong method, the compiler often won't stop you — the types still work out, or you accept a looser type like `Object`. The bug only shows up at runtime: a `[Not completed]` in the output, a future result that's never read, or an exception that's swallowed silently.
+
+Knowing the dimension each pair differs on is the thing that makes the choice automatic.
+
+---
+
+Peace... 🍀
