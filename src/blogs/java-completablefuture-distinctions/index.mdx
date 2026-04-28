@@ -462,4 +462,81 @@ Knowing the dimension each pair differs on is the thing that makes the choice au
 
 ---
 
+## Further Reading
+
+### Is `AtomicBoolean` actually the right tool for long-running tasks?
+
+`AtomicBoolean` is a recognized pattern — but it has a critical limitation that matters the moment you apply it to real production work like database calls.
+
+It only works for **CPU-bound loops** where your code is actively running and can check the flag between iterations:
+
+```java
+for (Page page : pages) {
+    if (cancelled.get()) break;   // checks between pages — works fine
+    process(page);
+}
+```
+
+For a live database call, the thread is **blocked inside the JDBC driver** waiting for the network response. It is not running your code, so it never reaches `cancelled.get()`. Setting the flag does nothing until the query returns on its own.
+
+```java
+// cancelled.set(true) here does NOTHING until the query finishes
+ResultSet rs = statement.executeQuery("SELECT * FROM products");  // blocked here
+```
+
+For true mid-flight cancellation of a JDBC call, you need `Statement.cancel()`, which sends a cancel signal to the database server:
+
+```java
+AtomicReference<Statement> activeStmt = new AtomicReference<>();
+
+CompletableFuture<List<Product>> future = CompletableFuture.supplyAsync(() -> {
+    try (Statement stmt = conn.createStatement()) {
+        activeStmt.set(stmt);
+        ResultSet rs = stmt.executeQuery("SELECT * FROM products");
+        // ... process results
+    }
+});
+
+// On client disconnect — actually stops the in-flight query:
+Statement s = activeStmt.get();
+if (s != null) s.cancel();
+future.cancel(true);
+```
+
+### Thread interruption: the more idiomatic Java approach
+
+Java's built-in cooperative cancellation is `Thread.interrupt()`, not an `AtomicBoolean`. Most blocking operations — `Thread.sleep`, `Object.wait`, NIO channels — throw `InterruptedException` when the thread is interrupted. This means interruption propagates naturally through blocking code without any manual flag checks:
+
+```java
+// Most blocking calls already respect this — no AtomicBoolean needed
+if (Thread.currentThread().isInterrupted()) {
+    throw new InterruptedException("Cancelled");
+}
+```
+
+`future.cancel(true)` does interrupt the underlying thread for a raw `FutureTask`, but **not** for `CompletableFuture.supplyAsync` — the ForkJoinPool task is already submitted and the interrupt is ignored. This is why `AtomicBoolean` exists as a workaround in `CompletableFuture`-based code.
+
+### The real-world cancellation map
+
+| Scenario | Idiomatic Java approach |
+|---|---|
+| CPU-bound loop | `AtomicBoolean` check, or `Thread.interrupted()` |
+| JDBC / database | `Statement.cancel()` — sends cancel to the DB server |
+| HTTP client call | Timeout via `HttpRequest.Builder.timeout()`, or close the client |
+| Spring MVC async | `DeferredResult.onTimeout` / `future.orTimeout(...)` |
+| Spring WebFlux | Cancellation propagates automatically via subscription disposal |
+| Java 21 virtual threads | `StructuredTaskScope.ShutdownOnFailure` — cancels sibling tasks automatically |
+| Thread-pool tasks | `Thread.interrupt()` — respected by most blocking I/O |
+
+### The thumb rule
+
+- **`AtomicBoolean`** → loops between discrete checkpoints, or when combining with `CompletableFuture` where thread interruption doesn't reach
+- **`Statement.cancel()`** → the only way to actually stop a running DB query mid-flight
+- **Reactive (R2DBC, WebFlux)** → cancellation is structural, no manual wiring needed
+- **Java 21 `StructuredTaskScope`** → the modern answer: cancel is automatic when the scope shuts down
+
+`AtomicBoolean` is worth knowing and teaching precisely because it makes the cooperative model explicit. In production, you combine it with resource-level cancellation (`Statement.cancel`) or move to a framework that handles it structurally.
+
+---
+
 Peace... 🍀
