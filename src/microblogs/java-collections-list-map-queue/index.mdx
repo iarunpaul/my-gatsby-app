@@ -1,0 +1,126 @@
+---
+title: "Java Collections: List, Map, Queue & Deque"
+description: "ArrayList, LinkedList, HashMap, Queue, and Deque — when to reach for each one."
+date: "2026-04-28"
+slug: "java-collections-list-map-queue"
+tags: ["java", "collections", "fundamentals"]
+---
+
+## 📦 Java Collections: List, Map, Queue & Deque
+
+Java's collections framework gives you a toolbox of data structures. The trick is knowing which tool fits the job.
+
+---
+
+### 1️⃣ ArrayList vs LinkedList
+
+Both implement `List` — same API, very different internals.
+
+```java
+List<Person> people = new ArrayList<>();       // backed by a dynamic array
+List<String> names  = new LinkedList<>(seed);  // backed by doubly-linked nodes
+```
+
+| | `ArrayList` | `LinkedList` |
+|---|---|---|
+| Get by index | O(1) — direct jump | O(n) — walks the chain |
+| Add to end | O(1) amortised | O(1) |
+| Insert/remove middle | O(n) — shifts elements | O(1) once at the node |
+| Memory | Compact (contiguous) | Higher overhead (prev/next pointers per node) |
+
+**Default to `ArrayList`.** Reach for `LinkedList` only when you're inserting or removing heavily at the front or middle.
+
+---
+
+### 2️⃣ `List.of(...)` — Immutable List
+
+```java
+List<String> names = List.of("Alice", "Bob", "Charlie");
+names.add("David"); // 💥 UnsupportedOperationException
+```
+
+- Fixed size, no nulls, order preserved.
+- Great for constants. If you need to mutate it, wrap it: `new ArrayList<>(names)` or `new LinkedList<>(names)`.
+
+---
+
+### 3️⃣ HashMap
+
+```java
+Map<String, Object> map = new HashMap<>();
+map.put("john", new Person("John", 30));
+map.get("john"); // O(1) average
+```
+
+- Key→value lookup/insert/delete all **O(1) average**.
+- **No guaranteed key order** — use `LinkedHashMap` (insertion order) or `TreeMap` (sorted) if you need it.
+- Allows one `null` key and multiple `null` values.
+
+Use `HashMap` any time you need fast lookup by a key rather than by position.
+
+---
+
+### 4️⃣ Queue — First In, First Out (FIFO)
+
+Think of a checkout line — first person in, first served.
+
+```java
+Queue<String> queue = new LinkedList<>();
+queue.offer("Alice");    // add to tail
+queue.offer("Bob");
+queue.offer("Charlie");
+
+queue.poll();            // removes & returns "Alice"
+queue.peek();            // returns "Bob" without removing
+```
+
+| Action | Safe (returns null/false) | Throws on failure |
+|---|---|---|
+| Add | `offer()` | `add()` |
+| Remove head | `poll()` | `remove()` |
+| Inspect head | `peek()` | `element()` |
+
+**Use when:** processing tasks in arrival order — job queues, BFS graph traversal, event pipelines.
+
+---
+
+### 5️⃣ Deque — Double-Ended Queue
+
+Pronounced *"deck"*. Works as **both a queue and a stack** — you can add and remove from either end.
+
+```java
+Deque<String> deque = new ArrayDeque<>();
+
+// As a queue (FIFO)
+deque.offerLast("Alice");
+deque.offerLast("Bob");
+deque.pollFirst();        // "Alice"
+
+// As a stack (LIFO)
+deque.push("Alice");      // pushes to head
+deque.push("Bob");
+deque.pop();              // "Bob" — last in, first out
+```
+
+| | Front (head) | Back (tail) |
+|---|---|---|
+| Add | `offerFirst()` / `push()` | `offerLast()` / `offer()` |
+| Remove | `pollFirst()` / `pop()` | `pollLast()` |
+| Inspect | `peekFirst()` | `peekLast()` |
+
+**`ArrayDeque` vs `LinkedList` as Deque:** prefer `ArrayDeque` — no node allocation overhead, faster in practice. Use `LinkedList` only if you need `null` elements or the `List` interface on the same object.
+
+---
+
+### Quick Mental Model
+
+```
+ArrayList   → indexed reads, add to end         → default List choice
+LinkedList  → front inserts/removes, or as Deque
+List.of()   → immutable constants
+HashMap     → fast key→value lookup, no order
+Queue       → FIFO line                          → use LinkedList or ArrayDeque
+Deque       → both ends open                     → use ArrayDeque
+```
+
+Peace... 🍀
