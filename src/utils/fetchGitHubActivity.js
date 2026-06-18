@@ -1,18 +1,20 @@
 // src/utils/fetchGitHubActivity.js
 
-/**
- * Fetch GitHub user activity and statistics
- * Uses GitHub's public API - no authentication required for public data
- */
-
 const GITHUB_API_BASE = 'https://api.github.com';
+
+const getHeaders = () => {
+  const token = process.env.GATSBY_GITHUB_TOKEN;
+  return token
+    ? { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' }
+    : { Accept: 'application/vnd.github+json' };
+};
 
 /**
  * Get GitHub user profile and basic stats
  */
 export const fetchGitHubProfile = async (username) => {
   try {
-    const response = await fetch(`${GITHUB_API_BASE}/users/${username}`);
+    const response = await fetch(`${GITHUB_API_BASE}/users/${username}`, { headers: getHeaders() });
 
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status}`);
@@ -62,7 +64,7 @@ export const fetchGitHubRepositories = async (username, options = {}) => {
       type
     });
 
-    const response = await fetch(`${GITHUB_API_BASE}/users/${username}/repos?${params}`);
+    const response = await fetch(`${GITHUB_API_BASE}/users/${username}/repos?${params}`, { headers: getHeaders() });
 
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status}`);
@@ -103,7 +105,7 @@ export const fetchGitHubRepositories = async (username, options = {}) => {
  */
 export const fetchGitHubEvents = async (username, limit = 10) => {
   try {
-    const response = await fetch(`${GITHUB_API_BASE}/users/${username}/events/public?per_page=${limit}`);
+    const response = await fetch(`${GITHUB_API_BASE}/users/${username}/events/public?per_page=${limit}`, { headers: getHeaders() });
 
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status}`);
@@ -144,7 +146,7 @@ export const fetchGitHubLanguages = async (username, repoLimit = 20) => {
       if (repo.fork || repo.archived) continue; // Skip forks and archived repos
 
       try {
-        const response = await fetch(`${GITHUB_API_BASE}/repos/${repo.full_name}/languages`);
+        const response = await fetch(`${GITHUB_API_BASE}/repos/${repo.full_name}/languages`, { headers: getHeaders() });
 
         if (response.ok) {
           const languages = await response.json();
