@@ -41,73 +41,87 @@ export const fetchCertifications = async () => {
   // Mock data fallback with proper placeholder images
   const mockData = [
     {
-      id: "cert-js-dev",
-      name: "Certified JavaScript Developer",
+      id: "cert-k8s-cka",
+      name: "CKA: Certified Kubernetes Administrator",
       description: "Demonstrates advanced proficiency in JavaScript programming, including ES6+ features, async programming, and modern development practices.",
-      image_url: "https://images.credly.com/images/c34436dc-1cfd-4125-a862-35f9c86ca17f/image.png",
+      image_url: "https://images.credly.com/size/340x340/images/8b8ed108-e77d-4396-ac59-2504583b9d54/cka_from_cncfsite__281_29.png",
       issued_at: "2023-01-15T00:00:00Z",
-      issuer: "JavaScript Institute",
+      issuer: "CNCF (Cloud Native Computing Foundation)",
       badge_template: {
         name: "JavaScript Developer Certification",
         image_url: createPlaceholderImage("JS", "#f7df1e")
       },
-      public_url: "https://www.credly.com/badges/javascript-dev-cert",
+      public_url: "https://www.credly.com/badges/8f69e49b-f1fa-4f33-b707-0df09dc01a4c/public_url",
       expires_at: null
     },
     {
-      id: "cert-aws-sa",
-      name: "AWS Certified Solutions Architect - Associate",
-      description: "Validates expertise in designing distributed systems and implementing scalable applications on Amazon Web Services.",
-      image_url: "https://images.credly.com/images/8b8ed108-e77d-4396-ac59-2504583b9d54/cka_from_cncfsite__281_29.png",
+      id: "cert-prom-assoc",
+      name: "PCA: Prometheus Certified Associate",
+      description: "Validates expertise in monitoring and observability.",
+      image_url: "https://images.credly.com/size/340x340/images/c34436dc-1cfd-4125-a862-35f9c86ca17f/image.png",
       issued_at: "2023-03-10T00:00:00Z",
-      issuer: "Amazon Web Services",
+      issuer: "CNCF (Cloud Native Computing Foundation)",
       badge_template: {
-        name: "AWS Certified Solutions Architect - Associate",
-        image_url: createPlaceholderImage("AWS", "#ff9900")
+        name: "Prometheus Certified Associate",
+        image_url: createPlaceholderImage("PROM", "#0078d4")
       },
-      public_url: "https://www.credly.com/badges/aws-solutions-architect",
+      public_url: "https://www.credly.com/badges/d95fcebc-e0c9-4d4a-8ab8-5c795926a84f/public_url",
       expires_at: "2026-03-10T00:00:00Z"
-    },
-    {
-      id: "cert-gcp-de",
-      name: "Google Cloud Professional Data Engineer",
-      description: "Demonstrates ability to design, build, operationalize, secure, and monitor data processing systems on Google Cloud Platform.",
-      image_url: "https://images.credly.com/images/95583311-36dd-4a12-9066-8bd1e0aa5c20/converted20250723-31-p5ehw7.png",
-      issued_at: "2023-05-20T00:00:00Z",
-      issuer: "Google Cloud",
-      badge_template: {
-        name: "Professional Data Engineer",
-        image_url: "https://images.credly.com/images/95583311-36dd-4a12-9066-8bd1e0aa5c20/converted20250723-31-p5ehw7.png"
-      },
-      public_url: "https://www.credly.com/badges/gcp-data-engineer",
-      expires_at: "2025-05-20T00:00:00Z"
     },
     {
       id: "cert-azure-dev",
       name: "Microsoft Certified: Azure Developer Associate",
       description: "Validates skills in developing cloud solutions that span multiple services, including compute, storage, security, and monitoring.",
-      image_url: createPlaceholderImage("AZ", "#0078d4"),
+      image_url: "https://images.credly.com/images/95583311-36dd-4a12-9066-8bd1e0aa5c20/converted20250723-31-p5ehw7.png",
       issued_at: "2023-08-15T00:00:00Z",
       issuer: "Microsoft",
       badge_template: {
         name: "Azure Developer Associate",
         image_url: createPlaceholderImage("AZ", "#0078d4")
       },
-      public_url: "https://www.credly.com/badges/azure-developer",
-      expires_at: "2025-08-15T00:00:00Z"
+      public_url: "https://learn.microsoft.com/en-us/users/arunpaul-9812/credentials/86c872fc6eacbfa8?ref=https%3A%2F%2Fwww.credly.com%2F",
+      expires_at: "2026-08-15T00:00:00Z"
     },
     {
-      id: "cert-kubernetes",
-      name: "Certified Kubernetes Application Developer",
+      id: "cert-azure-architect",
+      name: "Microsoft Azure Architect Technologies",
       description: "Demonstrates ability to design, build and deploy cloud-native applications for Kubernetes.",
-      image_url: createPlaceholderImage("K8s", "#326ce5"),
+      image_url: "https://images.credly.com/images/285339cc-675a-4b1a-bdd9-283868af2fc8/EXAM-Expert-AZ-303-600x600.png",
       issued_at: "2023-10-05T00:00:00Z",
       issuer: "Cloud Native Computing Foundation",
       badge_template: {
-        name: "Certified Kubernetes Application Developer",
+        name: "AZ-303: Microsoft Azure Architect Technologies",
         image_url: createPlaceholderImage("K8s", "#326ce5")
       },
-      public_url: "https://www.credly.com/badges/kubernetes-ckad",
+      public_url: "https://www.credly.com/badges/b4f51722-6876-4240-a0d5-c8e20b444089/public_url",
+      expires_at: "2026-10-05T00:00:00Z"
+    },
+    {
+      id: "cert-coursera-mlops",
+      name: "Supervised Machine Learning: Regression and Classification",
+      description: "Demonstrates ability to design, build and deploy mlops pipelines for machine learning models.",
+      image_url: "https://d3njjcbhbojbot.cloudfront.net/api/utilities/v1/imageproxy/http://coursera-university-assets.s3.amazonaws.com/b4/5cb90bb92f420b99bf323a0356f451/Icon.png?auto=format%2Ccompress&dpr=1&w=80&h=80",
+      issued_at: "2025-10-05T00:00:00Z",
+      issuer: "Coursera",
+      badge_template: {
+        name: "Supervised Machine Learning: Regression and Classification",
+        image_url: createPlaceholderImage("K8s", "#326ce5")
+      },
+      public_url: "https://www.coursera.org/account/accomplishments/verify/36HHTRDOZ1TN",
+      expires_at: "2026-10-05T00:00:00Z"
+    },
+    {
+      id: "cert-kusto-badge1",
+      name: "Kusto Detective Agency - Case #1 Badge",
+      description: "Demonstrates ability to query and analyze data using Kusto Query Language (KQL) in Microsoft Azure.",
+      image_url: "https://images.credly.com/size/340x340/images/14d53c52-2701-4045-9f89-e5e510eee2fd/image.png",
+      issued_at: "2023-10-05T00:00:00Z",
+      issuer: "Microsoft",
+      badge_template: {
+        name: "Kusto Detective Agency - Case #1 Badge",
+        image_url: createPlaceholderImage("K8s", "#326ce5")
+      },
+      public_url: "https://www.credly.com/badges/b1617377-a8fa-4594-9e54-4a65da1d1853/public_url",
       expires_at: "2026-10-05T00:00:00Z"
     }
   ];

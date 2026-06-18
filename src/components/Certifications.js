@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   fetchCertifications,
-  isCertificationExpired,
   groupCertificationsByIssuer,
   sortCertificationsByDate
 } from '../utils/fetchCertifications';
@@ -106,7 +105,6 @@ const Certifications = ({ displayMode = 'grid', maxItems = null }) => {
   }
 
   const CertificationCard = ({ cert }) => {
-    const isExpired = isCertificationExpired(cert);
     const [imageError, setImageError] = useState(false);
 
     const handleImageError = (e) => {
@@ -117,7 +115,7 @@ const Certifications = ({ displayMode = 'grid', maxItems = null }) => {
     };
 
     return (
-      <div className={`certification-card bg-white rounded-lg border shadow-sm hover:shadow-md transition-shadow p-4 ${isExpired ? 'opacity-75' : ''}`}>
+      <div className="certification-card bg-white rounded-lg border shadow-sm hover:shadow-md transition-shadow p-4">
         <div className="flex items-start space-x-4">
           <div className="flex-shrink-0">
             <img
@@ -129,22 +127,12 @@ const Certifications = ({ displayMode = 'grid', maxItems = null }) => {
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <h3 className="text-sm font-semibold text-gray-900 truncate">
-                  {cert.name}
-                </h3>
-                <p className="text-xs text-gray-600 mt-1">
-                  {cert.issuer}
-                </p>
-              </div>
-
-              {isExpired && (
-                <span className="ml-2 inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
-                  Expired
-                </span>
-              )}
-            </div>
+            <h3 className="text-sm font-semibold text-gray-900 truncate">
+              {cert.name}
+            </h3>
+            <p className="text-xs text-gray-600 mt-1">
+              {cert.issuer}
+            </p>
 
             <p className="text-xs text-gray-500 mt-2 line-clamp-2">
               {cert.description}
@@ -153,11 +141,6 @@ const Certifications = ({ displayMode = 'grid', maxItems = null }) => {
             <div className="flex items-center justify-between mt-3">
               <div className="text-xs text-gray-400">
                 Issued: {new Date(cert.issued_at).toLocaleDateString()}
-                {cert.expires_at && (
-                  <span className="ml-2">
-                    • Expires: {new Date(cert.expires_at).toLocaleDateString()}
-                  </span>
-                )}
               </div>
 
               {cert.public_url && (
