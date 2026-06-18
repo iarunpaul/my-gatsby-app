@@ -36,6 +36,7 @@ jobs:
           GATSBY_DICT_API: ${{ secrets.GATSBY_DICT_API }}
           GATSBY_AZURE_DEVOPS_ORG: ${{ secrets.GATSBY_AZURE_DEVOPS_ORG }}
           GATSBY_AZURE_DEVOPS_PAT: ${{ secrets.GATSBY_AZURE_DEVOPS_PAT }}
+          GATSBY_GITHUB_TOKEN: ${{ secrets.GATSBY_GITHUB_TOKEN }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
